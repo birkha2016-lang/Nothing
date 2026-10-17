@@ -113,6 +113,29 @@ function get_real_ip() {
     return $_SERVER['REMOTE_ADDR'] ?? 'Unknown';
 }
 
+// دالة لتنظيف وتبسيط اسم المتعامل بدلاً من الأسماء الطويلة
+function clean_isp_name($isp) {
+    if (empty($isp)) return 'Unknown';
+    
+    // فحص أسماء الشركات الجزائرية الأكثر شيوعاً
+    if (stripos($isp, 'Optimum') !== false || stripos($isp, 'Djezzy') !== false || stripos($isp, 'OTA') !== false) {
+        return 'Djezzy';
+    }
+    if (stripos($isp, 'ATM') !== false || stripos($isp, 'Mobilis') !== false) {
+        return 'Mobilis';
+    }
+    if (stripos($isp, 'Wataniya') !== false || stripos($isp, 'Ooredoo') !== false || stripos($isp, 'Nedjma') !== false) {
+        return 'Ooredoo';
+    }
+    if (stripos($isp, 'Algerie Telecom') !== false || stripos($isp, 'Algérie Télécom') !== false || stripos($isp, 'AT') !== false) {
+        return 'Algérie Télécom';
+    }
+
+    // إذا كان من شركة أخرى يختصر أول كلمتين فقط
+    $words = explode(' ', trim($isp));
+    return implode(' ', array_slice($words, 0, 2));
+}
+
 function get_ip_location_and_isp($ip) {
     if ($ip === '127.0.0.1' || $ip === 'Unknown' || strpos($ip, '192.168.') === 0) {
         return ['location' => 'Local Network', 'isp' => 'Internal/VPN'];
@@ -122,7 +145,8 @@ function get_ip_location_and_isp($ip) {
         $data = json_decode($json, true);
         if (isset($data['status']) && $data['status'] === 'success') {
             $location = ($data['city'] ? $data['city'] . ', ' : '') . ($data['country'] ?? 'Unknown');
-            $isp = $data['isp'] ?? 'Unknown ISP';
+            $raw_isp = $data['isp'] ?? 'Unknown ISP';
+            $isp = clean_isp_name($raw_isp); // تنظيف اسم المتعامل هنا
             return ['location' => $location, 'isp' => $isp];
         }
     }
@@ -464,7 +488,6 @@ if (!empty($filter_code)) {
             });
         }
 
-        // دالة لصق الرمز من الحافظة إلى خانة الفلترة
         async function pasteCodeToFilter(btnElement) {
             try {
                 const text = await navigator.clipboard.readText();
@@ -513,7 +536,6 @@ if (!empty($filter_code)) {
                         </div>
                     </div>
                     
-                    <!-- خانة مستقلة خاصة بنسخ رمز التتبع وحده -->
                     <div>
                         <label>Tracking Code (رمز التتبع):</label>
                         <div class="flex-row" style="margin-top: 6px;">
@@ -531,7 +553,6 @@ if (!empty($filter_code)) {
                 <input type="text" id="trackCodeInput" name="track" placeholder="Filter by code..." value="<?php echo htmlspecialchars($filter_code); ?>" style="flex:1; min-width: 200px;">
                 <div style="display: flex; gap: 8px;">
                     <button type="submit" class="btn" style="height:48px;">Filter</button>
-                    <!-- الزر الأخضر للـ لصق (Paste) -->
                     <button type="button" class="btn btn-success" style="height:48px;" onclick="pasteCodeToFilter(this)">Paste Code</button>
                     <?php if(!empty($filter_code)): ?>
                         <a href="/" class="btn btn-danger" style="height:48px; text-decoration:none; display:flex; align-items:center;">Reset</a>
@@ -571,7 +592,7 @@ if (!empty($filter_code)) {
                                 <span>Location:</span> <span style="color:#10b981;"><?php echo htmlspecialchars($cap['location']); ?></span>
                             </div>
                             <div class="info-row">
-                                <span>المتعامل:</span> <span style="color:#f97316;"><?php echo htmlspecialchars($cap['isp_info']); ?></span>
+                                <span>المتعامل:</span> <span style="color:#f97316; font-weight: bold;"><?php echo htmlspecialchars($cap['isp_info']); ?></span>
                             </div>
                             <div class="info-row">
                                 <span>Device:</span> <span><?php echo htmlspecialchars($cap['device_info']); ?></span>
