@@ -25,9 +25,9 @@ try {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )");
 
-    $adminExists = $db->query("SELECT COUNT(*) FROM users WHERE role = 'azeez'")->fetchColumn();
+    $adminExists = $db->query("SELECT COUNT(*) FROM users WHERE role = 'admin'")->fetchColumn();
     if (!$adminExists) {
-        $hash = password_hash('0552380963', PASSWORD_DEFAULT);
+        $hash = password_hash('aziz123', PASSWORD_DEFAULT);
         $db->prepare("INSERT INTO users (username, password, role, tg_chat) VALUES ('admin', ?, 'admin', '6475721500')")->execute([$hash]);
     }
 
