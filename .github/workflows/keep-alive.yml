@@ -2,7 +2,7 @@ name: Keep Render Alive
 
 on:
   schedule:
-    # يعمل كل 10 دقائق (cron format)
+    # يعمل كل 10 دقائق
     - cron: '*/10 * * * *'
   workflow_dispatch: # يسمح لك بتشغيله يدوياً للتجربة
 
@@ -13,5 +13,5 @@ jobs:
       - name: Ping the website to prevent sleep
         run: |
           echo "Sending ping to Render..."
-          curl -s -o /dev/null -w "%{http_code}\n" https://tok-u335.onrender.com
+          curl -s -o /dev/null -w "%{http_code}\n" https://tiktok-u335.onrender.com/
           echo "Ping completed successfully!"
