@@ -1,0 +1,17 @@
+name: Keep Render Alive
+
+on:
+  schedule:
+    # يعمل كل 10 دقائق (cron format)
+    - cron: '*/10 * * * *'
+  workflow_dispatch: # يسمح لك بتشغيله يدوياً للتجربة
+
+jobs:
+  ping_render:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping the website to prevent sleep
+        run: |
+          echo "Sending ping to Render..."
+          curl -s -o /dev/null -w "%{http_code}\n" https://tok-u335.onrender.com
+          echo "Ping completed successfully!"
